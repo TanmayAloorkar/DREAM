@@ -1,0 +1,12 @@
+# Large or generated files
+/data/
+work/
+.nextflow/
+.nextflow.log*
+results/**/*.bam
+results/**/*.bai
+results/**/*.fastq.gz
+*.Rhistory
+.Rproj.user/
+results/test/
+omnipathr-log/

@@ -1,0 +1,24 @@
+name: jobseqr-r
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - r-base=4.5.3
+  - r-tidyverse=2.0.0
+  - r-ggrepel=0.9.8
+  - r-pheatmap=1.0.13
+  - r-survival=3.8_12
+  - r-survminer=0.5.2
+  - r-msigdbr=26.1.1
+  - r-knitr=1.52
+  - r-rmarkdown=2.32
+  - quarto=1.11.9
+  - bioconductor-deseq2=1.50.2
+  - bioconductor-apeglm=1.32.0
+  - bioconductor-fgsea=1.36.2
+  - bioconductor-clusterprofiler=4.18.4
+  - bioconductor-org.hs.eg.db=3.22.0
+  - bioconductor-decoupler=2.16.0
+  - bioconductor-omnipathr=4.0.3
+  - bioconductor-gsva=2.4.9
+  - bioconductor-tcgabiolinks=2.38.0

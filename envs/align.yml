@@ -1,0 +1,9 @@
+name: jobseqr-align
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - hisat2=2.2.3
+  - samtools=1.25
+  - subread=2.1.1
+  - qualimap=2.3
