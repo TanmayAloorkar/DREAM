@@ -1,0 +1,7 @@
+sample,run,fastq_1,fastq_2,condition
+A549_control_1,SRR18159276,,,control
+A549_control_2,SRR18159279,,,control
+A549_control_3,SRR18159275,,,control
+A549_trametinib_1,SRR18159274,,,trametinib
+A549_trametinib_2,SRR18159273,,,trametinib
+A549_trametinib_3,SRR18159272,,,trametinib

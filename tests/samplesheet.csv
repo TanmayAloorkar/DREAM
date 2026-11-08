@@ -1,3 +1,5 @@
-sample,fastq_1,fastq_2
-ctrl_1,tests/data/ctrl_1_R1.fastq.gz,tests/data/ctrl_1_R2.fastq.gz
-drug_1,tests/data/drug_1_R1.fastq.gz,tests/data/drug_1_R2.fastq.gz
+sample,run,fastq_1,fastq_2
+ctrl_1,,tests/data/ctrl_1_R1.fastq.gz,tests/data/ctrl_1_R2.fastq.gz
+ctrl_2,,tests/data/ctrl_2_R1.fastq.gz,tests/data/ctrl_2_R2.fastq.gz
+drug_1,,tests/data/drug_1_R1.fastq.gz,tests/data/drug_1_R2.fastq.gz
+drug_2,,tests/data/drug_2_R1.fastq.gz,tests/data/drug_2_R2.fastq.gz
