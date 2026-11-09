@@ -1,0 +1,15 @@
+statistic	source	condition	score	p_value
+mlm	Androgen	trametinib_vs_control	3.977727788035344	6.990267395347178e-5
+mlm	EGFR	trametinib_vs_control	-0.08591893855355581	0.9315319993991429
+mlm	Estrogen	trametinib_vs_control	0.5612710113905026	0.574621157555133
+mlm	Hypoxia	trametinib_vs_control	3.9623225158904103	7.456658044942417e-5
+mlm	JAK-STAT	trametinib_vs_control	-6.852570824891549	7.535121202558308e-12
+mlm	MAPK	trametinib_vs_control	-14.756748226260648	6.118025370784687e-49
+mlm	NFkB	trametinib_vs_control	-4.387502813367375	1.1543935139920433e-5
+mlm	PI3K	trametinib_vs_control	5.737420838158004	9.79783987477076e-9
+mlm	TGFb	trametinib_vs_control	5.017009727938846	5.308023460588103e-7
+mlm	TNFa	trametinib_vs_control	3.0540671589343713	0.002261560308943744
+mlm	Trail	trametinib_vs_control	-0.12910386521554904	0.8972771889197033
+mlm	VEGF	trametinib_vs_control	-0.9994987023713878	0.3175692378989455
+mlm	WNT	trametinib_vs_control	-3.986001939870508	6.751301929413431e-5
+mlm	p53	trametinib_vs_control	2.148419151845737	0.03169638136166023

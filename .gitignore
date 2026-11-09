@@ -17,3 +17,4 @@ results/**
 analysis/*.html
 analysis/*_files/
 results/test/
+!results/*/decoupler/**

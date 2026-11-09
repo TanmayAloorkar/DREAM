@@ -1,0 +1,147 @@
+---
+title: "DREAM: what trametinib switches off in A549 cells"
+subtitle: "GSE197555 — pathway and transcription factor activity with decoupleR"
+format:
+  html:
+    embed-resources: true
+    toc: true
+    code-fold: true
+execute:
+  warning: false
+  message: false
+params:
+  deseq2: "../results/GSE197555_A549/deseq2/deseq2_results.tsv"
+  counts: "../results/GSE197555_A549/deseq2/counts_matrix.tsv.gz"
+  samplesheet: "../samplesheets/GSE197555_A549.csv"
+  progeny: "resources/progeny_human_top500.tsv"
+  collectri: "resources/collectri_human.tsv"
+  outdir: "../results/GSE197555_A549/decoupler"
+---
+
+The differential expression report gives a list of changed genes. Here those changes are traced back to the signalling pathways (PROGENy, 14 pathways) and transcription factors (CollecTRI, ~1,200 TFs) that most likely caused them, using the footprint of known target genes rather than the expression of the pathway or TF genes themselves.
+
+Networks were downloaded from OmniPath with decoupleR on 2026-11-09 and are stored in `analysis/resources/` so results do not drift as OmniPath is updated.
+
+```{r setup}
+library(decoupleR)
+library(DESeq2)
+library(org.Hs.eg.db)
+library(pheatmap)
+library(tidyverse)
+
+dir.create(file.path(params$outdir, "figures"), recursive = TRUE, showWarnings = FALSE)
+theme_set(theme_bw(base_size = 12))
+
+progeny <- read_tsv(params$progeny, show_col_types = FALSE)
+collectri <- read_tsv(params$collectri, show_col_types = FALSE)
+```
+
+## Inputs
+
+Contrast-level input: the DESeq2 Wald statistic (trametinib vs control, corrected labels), one value per gene symbol. Sample-level input: variance-stabilised counts.
+
+```{r inputs}
+de <- read_tsv(params$deseq2, show_col_types = FALSE)
+stat_mat <- de |>
+  filter(!is.na(symbol), !is.na(stat)) |>
+  group_by(symbol) |>
+  slice_max(abs(stat), n = 1, with_ties = FALSE) |>
+  ungroup() |>
+  (\(x) matrix(x$stat, dimnames = list(x$symbol, "trametinib_vs_control")))()
+
+meta <- read.csv(params$samplesheet) |>
+  mutate(condition = factor(condition, levels = c("control", "trametinib")),
+         label = paste0(condition, "_", gsm))
+counts <- read_tsv(params$counts, show_col_types = FALSE) |> column_to_rownames("gene_id") |> as.matrix()
+counts <- counts[rowSums(counts >= 10) >= 3, meta$sample]
+colnames(counts) <- meta$label
+vsd <- assay(vst(DESeqDataSetFromMatrix(counts, meta |> mutate(sample = label), ~ condition), blind = TRUE))
+sym <- mapIds(org.Hs.eg.db, rownames(vsd), "SYMBOL", "ENSEMBL")
+keep <- !is.na(sym) & !duplicated(sym)
+expr_mat <- vsd[keep, ]
+rownames(expr_mat) <- sym[keep]
+
+tibble(genes_in_contrast = nrow(stat_mat), genes_in_sample_matrix = nrow(expr_mat))
+```
+
+## Pathway activity (PROGENy)
+
+Multivariate linear model: each pathway's score accounts for the others, so shared target genes are not double counted.
+
+```{r progeny}
+pw <- run_mlm(stat_mat, progeny, .source = "source", .target = "target", .mor = "weight", minsize = 5)
+write_tsv(pw, file.path(params$outdir, "progeny_contrast.tsv"))
+
+p_pw <- pw |>
+  mutate(source = fct_reorder(source, score)) |>
+  ggplot(aes(score, source, fill = score > 0)) +
+  geom_col() +
+  scale_fill_manual(values = c(`TRUE` = "#c0392b", `FALSE` = "#2471a3"), guide = "none") +
+  labs(x = "Activity score (trametinib vs control)", y = NULL)
+ggsave(file.path(params$outdir, "figures", "progeny.png"), p_pw, width = 6, height = 4.5, dpi = 150)
+p_pw
+
+# MEK sits directly in the MAPK pathway; if its footprint does not fall, the inputs are wrong
+stopifnot(pw$score[pw$source == "MAPK"] < 0)
+```
+
+**Reading:** MAPK is by far the most suppressed pathway, as expected for a MEK inhibitor. PI3K activity goes *up*: blocking MEK removes ERK's negative feedback on upstream receptors, a well-known escape route that motivates MEK + PI3K/AKT combinations. EGFR scores near zero because its footprint overlaps MAPK, and the multivariate model assigns the shared signal to MAPK. JAK-STAT and NFkB fall alongside the interferon and inflammatory Hallmark sets seen in the enrichment report.
+
+```{r progeny_samples, fig.height=4}
+pw_s <- run_mlm(expr_mat, progeny, .source = "source", .target = "target", .mor = "weight", minsize = 5)
+pw_s |>
+  select(source, condition, score) |>
+  pivot_wider(names_from = condition, values_from = score) |>
+  column_to_rownames("source") |>
+  as.matrix() |>
+  pheatmap(scale = "row", annotation_col = meta |> column_to_rownames("label") |> select(condition),
+           main = "PROGENy activity per sample (row-scaled)")
+```
+
+## Transcription factor activity (CollecTRI)
+
+Univariate linear model per TF; positive means the TF's targets move in the direction the TF is known to push them.
+
+```{r collectri}
+tf <- run_ulm(stat_mat, collectri, .source = "source", .target = "target", .mor = "mor", minsize = 5)
+write_tsv(tf |> arrange(p_value), file.path(params$outdir, "collectri_contrast.tsv"))
+
+erk_tfs <- c("ETV1", "ETV4", "ETV5", "ELK1", "ELK4", "FOS", "FOSL1", "EGR1", "MYC", "ETS1", "ETS2")
+top_tf <- tf |> filter(p_value < 0.05) |> slice_max(abs(score), n = 30)
+p_tf <- top_tf |>
+  mutate(source = fct_reorder(source, score),
+         group = if_else(source %in% erk_tfs, "ERK-driven", if_else(score > 0, "up", "down"))) |>
+  ggplot(aes(score, source, fill = group)) +
+  geom_col() +
+  scale_fill_manual(values = c(`ERK-driven` = "#7d3c98", up = "#c0392b", down = "#2471a3")) +
+  labs(x = "TF activity score (trametinib vs control)", y = NULL, fill = NULL)
+ggsave(file.path(params$outdir, "figures", "collectri_top30.png"), p_tf, width = 6.5, height = 7, dpi = 150)
+p_tf
+```
+
+Known ERK-driven transcription factors:
+
+```{r erk_tfs}
+tf |> filter(source %in% erk_tfs) |> select(source, score, p_value) |> arrange(score) |>
+  knitr::kable(digits = 3)
+```
+
+**Reading:** MYC, FOSL1 and ETS1, all stabilised or induced by ERK, lose activity. ETV4/ETV5 point the same way but have few curated targets in CollecTRI, so their footprint is weak even though the genes themselves fall 30-200x. FOXO3 gains activity, consistent with ERK normally phosphorylating FOXO3 for degradation, and NFE2L2 (NRF2) gains activity, matching the oxidative stress signal in the Hallmark results.
+
+```{r tf_samples, fig.height=8}
+tf_s <- run_ulm(expr_mat, collectri, .source = "source", .target = "target", .mor = "mor", minsize = 5)
+tf_s |>
+  filter(source %in% top_tf$source) |>
+  select(source, condition, score) |>
+  pivot_wider(names_from = condition, values_from = score) |>
+  column_to_rownames("source") |>
+  as.matrix() |>
+  pheatmap(scale = "row", annotation_col = meta |> column_to_rownames("label") |> select(condition),
+           fontsize_row = 8, main = "Top 30 TFs per sample (row-scaled)")
+```
+
+## Session info
+
+```{r session}
+sessionInfo()
+```
