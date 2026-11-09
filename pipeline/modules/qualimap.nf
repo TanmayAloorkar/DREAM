@@ -17,6 +17,8 @@ process QUALIMAP {
     def pe = meta.single_end ? '' : '-pe'
     """
     unset DISPLAY
-    qualimap rnaseq -bam $bam -gtf $gtf -outdir ${meta.id} -p $strand $pe --java-mem-size=5G
+    # Full Ensembl GTF (~5M regions) runs Qualimap out of memory; canonical transcripts are enough for QC
+    if grep -q -m1 Ensembl_canonical $gtf; then grep -E '^#|Ensembl_canonical' $gtf > qc.gtf; else ln -s $gtf qc.gtf; fi
+    qualimap rnaseq -bam $bam -gtf qc.gtf -outdir ${meta.id} -p $strand $pe --java-mem-size=5G
     """
 }
