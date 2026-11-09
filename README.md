@@ -21,6 +21,16 @@ The worked example is [GSE197555](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi
 
 The rendered reports are in `docs/` and published with GitHub Pages at [tanmayaloorkar.github.io/DREAM](https://tanmayaloorkar.github.io/DREAM/). To refresh them, copy `analysis/0*.html` into `docs/` and replace your home directory path in the session info.
 
+## Download
+
+Linux (x86_64) only.
+
+1. Download `DREAM-<version>-linux-x86_64.tar.gz` from the [latest release](https://github.com/TanmayAloorkar/DREAM/releases/latest).
+2. Extract it, for example with `tar -xzf DREAM-*-linux-x86_64.tar.gz` or right-click and "Extract here".
+3. Open the folder and double-click **Run_Dream**. The desktop app opens on that folder; its Setup tab shows what is missing and downloads the reference data (about 19 GB) when you ask.
+
+The archive holds the whole project plus the app. DREAM still needs Miniforge (conda), Java 17 or later and Nextflow, which the Setup tab links to.
+
 ## Findings
 
 - **The GEO labels for the A549 samples appear to be swapped.** Every classic ERK target is higher in the samples labelled trametinib. The H460 samples from the same series behave as expected, which points to the labels rather than the pipeline. No correction has been published, so this is an inference from the data. The correction and the evidence are in [samplesheets/README.md](samplesheets/README.md) and report 01.
@@ -63,7 +73,7 @@ done
 ![Setup tab](docs/gui/setup.png)
 ![Run tab in dark mode](docs/gui/run-dark.png)
 
-Linux only. Build it with Rust (stable) and run it from the repo, or download `dream-gui-linux-x86_64` from the latest CI run:
+Linux only. It ships as `Run_Dream` in each release (see Download above), or build it with Rust (stable) and run it from the repo:
 
 ```bash
 cd gui && cargo build --release

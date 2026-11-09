@@ -32,15 +32,17 @@ pub fn save_setting(name: &str, value: &str) {
     }
 }
 
-/// Saved choice first, then the working directory, then the folders above the executable.
+/// The DREAM folder the executable sits in (Run_Dream in a release, or gui/target/... in a checkout)
+/// comes first, so a fresh download never opens an older saved folder; then the saved choice,
+/// then the working directory.
 pub fn find() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok();
     let saved = setting("project").map(PathBuf::from);
     let cwd = std::env::current_dir().ok();
-    let exe = std::env::current_exe().ok();
-    saved
-        .into_iter()
+    exe.iter()
+        .flat_map(|e| e.ancestors().skip(1).map(Path::to_path_buf))
+        .chain(saved)
         .chain(cwd)
-        .chain(exe.iter().flat_map(|e| e.ancestors().skip(1).map(Path::to_path_buf)))
         .find(|d| is_dream(d))
 }
 

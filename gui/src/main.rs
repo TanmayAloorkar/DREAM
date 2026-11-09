@@ -607,7 +607,13 @@ impl App {
 
         ui.horizontal(|ui| {
             ui.label(muted("Project"));
-            ui.label(RichText::new(project::tilde(&root)).font(mono(13.0)).strong());
+            // long paths (e.g. a release extracted deep in Downloads) are shortened, full path on hover
+            let path = project::tilde(&root);
+            let room = (ui.available_width() - 190.0).max(80.0);
+            ui.scope(|ui| {
+                ui.set_max_width(room);
+                ui.add(egui::Label::new(RichText::new(&path).font(mono(13.0)).strong()).truncate()).on_hover_text(&path);
+            });
             if ui.link("Change").clicked() {
                 actions.push(Action::ChooseRoot);
             }

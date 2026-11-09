@@ -26,3 +26,6 @@ results/test/
 
 # Rust build output
 gui/target/
+
+# Release archives built by scripts/package_release.sh
+dist/
