@@ -65,8 +65,8 @@ The **MEK activity score** for a tumour is the ssGSEA score of the trametinib-de
 ```{r signature}
 de <- read_tsv(params$deseq2, show_col_types = FALSE)
 cand <- de |> filter(padj < 0.05, baseMean >= 100, abs(log2FC_shrunk) >= 1, gene_id %in% rownames(expr))
-sig_down <- cand |> slice_min(log2FC_shrunk, n = 100)
-sig_up <- cand |> slice_max(log2FC_shrunk, n = 100)
+sig_down <- cand |> filter(log2FC_shrunk < 0) |> slice_min(log2FC_shrunk, n = 100)
+sig_up <- cand |> filter(log2FC_shrunk > 0) |> slice_max(log2FC_shrunk, n = 100)
 write_tsv(bind_rows(sig_down |> mutate(set = "decreased_by_trametinib"),
                     sig_up |> mutate(set = "increased_by_trametinib")) |>
             select(set, gene_id, symbol, log2FC_shrunk, padj),

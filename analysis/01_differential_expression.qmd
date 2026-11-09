@@ -270,7 +270,11 @@ dotplot(go_down, showCategory = 15) + ggtitle("Down in trametinib")
 # KEGG is queried online; a service outage should not sink the whole report
 kegg <- tryCatch(
   enrichKEGG(na.omit(sig$entrez), universe = na.omit(tab$entrez), organism = "hsa"),
-  error = function(e) { message("KEGG unavailable: ", conditionMessage(e)); NULL }
+  error = function(e) {
+    message("KEGG unavailable: ", conditionMessage(e))
+    unlink(file.path(params$outdir, "kegg.tsv"))  # do not leave a table from an earlier run looking current
+    NULL
+  }
 )
 if (!is.null(kegg)) {
   write_tsv(as.data.frame(kegg), file.path(params$outdir, "kegg.tsv"))

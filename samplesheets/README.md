@@ -9,3 +9,12 @@ In GEO, GSM5920523-25 ("A549 1-3") are listed as 0.1% DMSO and GSM5920526-28 ("A
 The H460 samples from the same GEO series, run through the same pipeline, show all ten genes lower in the samples labelled trametinib, as expected. So the pipeline and the expected biology are fine, and only the A549 labels are flipped.
 
 `condition` in `GSE197555_A549.csv` therefore holds the corrected label, and `geo_condition` keeps the original. The `sample` IDs keep the GEO-based names so the existing pipeline outputs (BAMs, counts) still match. The evidence is reproduced in `analysis/01_differential_expression.qmd`.
+
+## Run commands
+
+Inputs come from `scripts/get_inputs.sh`. Both GSE197555 libraries are unstranded (about 80% of read pairs assigned with `-s 0`, against about 43% with `reverse`).
+
+```bash
+nextflow run pipeline/main.nf --samplesheet samplesheets/GSE197555_A549.csv --gtf data/ref/Homo_sapiens.GRCh38.116.chr.gtf --hisat2_index data/ref/grch38_tran --strandedness unstranded --outdir results/GSE197555_A549
+nextflow run pipeline/main.nf --samplesheet samplesheets/GSE197555_H460_subset.csv --gtf data/ref/Homo_sapiens.GRCh38.116.chr.gtf --hisat2_index data/ref/grch38_tran --strandedness unstranded --outdir results/GSE197555_H460_subset
+```

@@ -28,7 +28,6 @@ Because trametinib and several other MEK inhibitors are in LINCS, the query has 
 library(signatureSearch)
 library(rhdf5)
 library(fgsea)
-library(ggrepel)
 library(tidyverse)
 
 dir.create(file.path(params$outdir, "figures"), recursive = TRUE, showWarnings = FALSE)
@@ -70,30 +69,6 @@ write_tsv(hits, file.path(params$outdir, "lincs_connectivity.tsv.gz"))
 tibble(signatures = nrow(hits), compounds = n_distinct(hits$pert_iname), cell_lines = n_distinct(hits$cell))
 ```
 
-## Positive control: MEK inhibitors
-
-```{r control}
-hits <- hits |> mutate(control = if_else(str_detect(coalesce(MOA, ""), fixed(params$positive_control_moa)),
-                                          params$positive_control_moa, "other"))
-ctrl_test <- wilcox.test(NCS ~ control, data = hits |> mutate(control = fct_relevel(control, params$positive_control_moa)),
-                         alternative = "greater")
-ctrl <- hits |> group_by(control) |> summarise(signatures = n(), median_NCS = median(NCS), .groups = "drop")
-ctrl
-ctrl_test$p.value
-
-p_ctrl <- ggplot(hits, aes(NCS, colour = control)) +
-  geom_density() +
-  scale_colour_manual(values = setNames(c("#c0392b", "grey50"), c(params$positive_control_moa, "other"))) +
-  labs(x = "NCS (positive = mimics trametinib)", y = "Density", colour = NULL)
-ggsave(file.path(params$outdir, "figures", "positive_control.png"), p_ctrl, width = 6, height = 3.5, dpi = 150)
-p_ctrl
-
-# The query is only trustworthy if drugs with the same mechanism come out as mimics
-stopifnot(ctrl$median_NCS[ctrl$control == params$positive_control_moa] > 0, ctrl_test$p.value < 0.05)
-```
-
-**Reading:** the 344 MEK inhibitor signatures have a median NCS near 1, against 0 for everything else (Wilcoxon p ≈ 1e-78). In A549 itself, selumetinib, PD-0325901 and trametinib each reach NCS 2.1-2.2. The A549 RNA-seq signature and the LINCS L1000 profiles come from different labs and platforms, so this agreement shows the query recovers mechanism, not just matching noise.
-
 ## Compound ranking
 
 About two thirds of signatures score exactly 0: the LINCS method sets the score to zero when the up and down genes move the same way. A per-signature median is therefore 0 for most compounds. Instead each compound gets signatureSearch's summary across cell lines, NCSct: the 67th or 33rd percentile of its NCS values, whichever is larger in magnitude. Compounds with fewer than 3 signatures are dropped.
@@ -105,15 +80,41 @@ cmp <- hits |>
             MOA = first(MOA), target = first(target), max_phase = first(max_phase), .groups = "drop") |>
   filter(signatures >= 3) |>
   arrange(desc(NCSct)) |>
-  mutate(rank = row_number())
+  mutate(rank = row_number(),
+         control = if_else(str_detect(coalesce(MOA, ""), fixed(params$positive_control_moa)),
+                           params$positive_control_moa, "other"))
 write_tsv(cmp, file.path(params$outdir, "compound_ranking.tsv"))
-
-cmp |> filter(str_detect(coalesce(MOA, ""), fixed(params$positive_control_moa))) |>
-  select(rank, pert, pert_iname, NCSct, signatures, max_phase) |>
-  knitr::kable(digits = 2, caption = paste("Compounds annotated", params$positive_control_moa, "(rank out of", nrow(cmp), ")"))
 ```
 
-**Reading:** MEK inhibitors take ranks 1, 2, 3, 5 and 6 of 13,205 compounds, and rank 4 is AZD-8330, a MEK inhibitor that simply lacks a mechanism annotation in LINCS. The weak scorers are compounds annotated MEK inhibitor for indirect or off-target reasons (arctigenin, nobiletin) and BIX-02189, which targets MEK5 rather than MEK1/2.
+## Positive control: MEK inhibitors
+
+Each compound counts once in the test, because one compound's signatures across cell lines are not independent.
+
+```{r control}
+ctrl_test <- wilcox.test(NCSct ~ control, data = cmp |> mutate(control = fct_relevel(control, params$positive_control_moa)),
+                         alternative = "greater")
+ctrl <- cmp |> group_by(control) |> summarise(compounds = n(), median_NCSct = median(NCSct), .groups = "drop")
+ctrl
+ctrl_test$p.value
+
+p_ctrl <- hits |>
+  mutate(control = if_else(pert %in% cmp$pert[cmp$control != "other"], params$positive_control_moa, "other")) |>
+  ggplot(aes(NCS, colour = control)) +
+  geom_density() +
+  scale_colour_manual(values = setNames(c("#c0392b", "grey50"), c(params$positive_control_moa, "other"))) +
+  labs(x = "NCS per signature (positive = mimics trametinib)", y = "Density", colour = NULL)
+ggsave(file.path(params$outdir, "figures", "positive_control.png"), p_ctrl, width = 6, height = 3.5, dpi = 150)
+p_ctrl
+
+cmp |> filter(control != "other") |>
+  select(rank, pert, pert_iname, NCSct, signatures, max_phase) |>
+  knitr::kable(digits = 2, caption = paste("Compounds annotated", params$positive_control_moa, "(rank out of", nrow(cmp), ")"))
+
+# The query is only trustworthy if drugs with the same mechanism come out as mimics
+stopifnot(ctrl$median_NCSct[ctrl$control == params$positive_control_moa] > 0, ctrl_test$p.value < 0.05)
+```
+
+**Reading:** the 17 MEK inhibitor compounds have a median NCSct of 1.3, against 0 for the other 13,188 (Wilcoxon p ≈ 3e-10), and they take 10 of the top 20 ranks, including 1, 2, 3, 5 and 6. Rank 4 is AZD-8330, a MEK inhibitor that simply lacks a mechanism annotation in LINCS. In A549 itself, selumetinib, PD-0325901 and trametinib each reach NCS 2.1-2.2. The weak scorers are compounds annotated MEK inhibitor for indirect or off-target reasons (arctigenin, nobiletin) and BIX-02189, which targets MEK5 rather than MEK1/2. The A549 RNA-seq signature and the LINCS L1000 profiles come from different labs and platforms, so this agreement shows the query recovers mechanism, not just matching noise.
 
 ## Mechanism-of-action enrichment
 
@@ -171,7 +172,7 @@ cand |> select(rank, pert_iname, MOA, target, NCSct, cell_lines) |> knitr::kable
 ## Summary
 
 - The local LINCS 2020 query passes its positive control: MEK inhibitors are the top mimics of the A549 trametinib signature, including trametinib itself.
-- Other mimics make mechanistic sense (pan-RAF and HSP90 inhibitors), and type I BRAF inhibitors reverse the signature, as paradoxical ERK activation predicts.
+- Other mimics make mechanistic sense (most RAF inhibitors and HSP90 inhibitors), while the clinical BRAF V600E inhibitors vemurafenib and dabrafenib reverse the signature, as paradoxical ERK activation predicts.
 - Glucocorticoids are the strongest non-MAPK mimic class among approved drugs, a testable hypothesis that would need DUSP1 and phospho-ERK measurements to support.
 
 ## Session info

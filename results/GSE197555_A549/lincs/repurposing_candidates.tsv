@@ -1,21 +1,21 @@
-pert	pert_iname	NCSct	signatures	cell_lines	MOA	target	max_phase	rank
-BRD-K45192137	dexamethasone	1.2749952313523274	3	3	Glucocorticoid receptor agonist	NR3C1	4	24
-BRD-K15574380	capecitabine	1.2394829691310858	3	3	DNA synthesis inhibitor; Thymidylate synthase inhibitor	TYMS	4	32
-BRD-K60640630	mometasone	1.1989603094739032	13	13	Glucocorticoid receptor agonist	NR3C1	4	46
-BRD-A77824596	fluocinolone-acetonide	1.1969245110365225	7	7	Corticosteroid agonist; Glucocorticoid receptor agonist	NR3C1	4	48
-BRD-K85606544	neratinib	1.0939590496174914	28	28	EGFR inhibitor	EGFR; ERBB2; ERBB4	4	129
-BRD-A11319535	beclomethasone-dipropionate	1.0899502790162479	8	8	Immunosuppressant; Glucocorticoid receptor agonist	NR3C1	4	133
-BRD-K78659596	ixazomib	1.0430567349020197	27	27	Proteasome inhibitor	PSMB1	4	205
-BRD-A82238138	budesonide	1.0335428289626938	9	9	Glucocorticoid receptor agonist	NR3C1	4	221
-BRD-K39983086	loteprednol	1.0018443760569706	7	7	Phospholipase inhibitor; Glucocorticoid receptor agonist	NR3C1	4	307
-BRD-K15236393	estrone	0.9959019556547768	3	3	Estrogen receptor agonist	ESR1	4	325
-BRD-A30717181	triamcinolone	0.9793341360297189	8	8	Glucocorticoid receptor agonist	NR3C1	4	376
-BRD-A66559694	naltrexone	0.9746926144512726	14	14	Opioid receptor antagonist	OPRD1; OPRK1; OPRM1	4	395
-BRD-K14705039	sulfathiazole	0.9689856292294422	3	3	NA	NA	4	416
-BRD-K99964838	bosutinib	0.9478180952001993	37	37	Src inhibitor; Abl kinase inhibitor	ABL1; HCK; LYN; BCR; SRC; CAMK2G	4	496
-BRD-K63828191	raloxifene	0.9222433074585138	22	22	Estrogen receptor antagonist; Selective estrogen receptor modulator	ESR1; ESR2	4	601
-BRD-K67174588	toremifene	0.8954682403291567	8	8	Estrogen receptor antagonist; Selective estrogen receptor modulator	ESR1	4	715
-BRD-A38749782	fludrocortisone-acetate	0.8890700223263281	9	9	Glucocorticoid receptor agonist; Mineralocorticoid receptor agonist	NR3C2	4	751
-BRD-K39188321	betamethasone	0.879073517288838	14	14	Glucocorticoid receptor agonist	NR3C1	4	777
-BRD-K50214219	CS-1657	0.8784166793450505	9	9	PARP inhibitor	PARP1	4	781
-BRD-K47679368	bromfenac	0.8717003476878953	8	8	Cyclooxygenase inhibitor	PTGS1; PTGS2	4	811
+pert	pert_iname	NCSct	signatures	cell_lines	MOA	target	max_phase	rank	control
+BRD-K45192137	dexamethasone	1.2749952313523274	3	3	Glucocorticoid receptor agonist	NR3C1	4	24	other
+BRD-K15574380	capecitabine	1.2394829691310858	3	3	DNA synthesis inhibitor; Thymidylate synthase inhibitor	TYMS	4	32	other
+BRD-K60640630	mometasone	1.1989603094739032	13	13	Glucocorticoid receptor agonist	NR3C1	4	46	other
+BRD-A77824596	fluocinolone-acetonide	1.1969245110365225	7	7	Corticosteroid agonist; Glucocorticoid receptor agonist	NR3C1	4	48	other
+BRD-K85606544	neratinib	1.0939590496174914	28	28	EGFR inhibitor	EGFR; ERBB2; ERBB4	4	129	other
+BRD-A11319535	beclomethasone-dipropionate	1.0899502790162479	8	8	Immunosuppressant; Glucocorticoid receptor agonist	NR3C1	4	133	other
+BRD-K78659596	ixazomib	1.0430567349020197	27	27	Proteasome inhibitor	PSMB1	4	205	other
+BRD-A82238138	budesonide	1.0335428289626938	9	9	Glucocorticoid receptor agonist	NR3C1	4	221	other
+BRD-K39983086	loteprednol	1.0018443760569706	7	7	Phospholipase inhibitor; Glucocorticoid receptor agonist	NR3C1	4	307	other
+BRD-K15236393	estrone	0.9959019556547768	3	3	Estrogen receptor agonist	ESR1	4	325	other
+BRD-A30717181	triamcinolone	0.9793341360297189	8	8	Glucocorticoid receptor agonist	NR3C1	4	376	other
+BRD-A66559694	naltrexone	0.9746926144512726	14	14	Opioid receptor antagonist	OPRD1; OPRK1; OPRM1	4	395	other
+BRD-K14705039	sulfathiazole	0.9689856292294422	3	3	NA	NA	4	416	other
+BRD-K99964838	bosutinib	0.9478180952001993	37	37	Src inhibitor; Abl kinase inhibitor	ABL1; HCK; LYN; BCR; SRC; CAMK2G	4	496	other
+BRD-K63828191	raloxifene	0.9222433074585138	22	22	Estrogen receptor antagonist; Selective estrogen receptor modulator	ESR1; ESR2	4	601	other
+BRD-K67174588	toremifene	0.8954682403291567	8	8	Estrogen receptor antagonist; Selective estrogen receptor modulator	ESR1	4	715	other
+BRD-A38749782	fludrocortisone-acetate	0.8890700223263281	9	9	Glucocorticoid receptor agonist; Mineralocorticoid receptor agonist	NR3C2	4	751	other
+BRD-K39188321	betamethasone	0.879073517288838	14	14	Glucocorticoid receptor agonist	NR3C1	4	777	other
+BRD-K50214219	CS-1657	0.8784166793450505	9	9	PARP inhibitor	PARP1	4	781	other
+BRD-K47679368	bromfenac	0.8717003476878953	8	8	Cyclooxygenase inhibitor	PTGS1; PTGS2	4	811	other
