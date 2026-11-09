@@ -20,3 +20,9 @@ results/test/
 !results/*/decoupler/**
 !results/*/tcga_luad/**
 !results/*/lincs/**
+
+# oil-ui design working files
+.oil-ui/
+
+# Rust build output
+gui/target/

@@ -51,6 +51,21 @@ for q in 01_differential_expression 02_mechanism 03_patients 04_drug_repurposing
 done
 ```
 
+### Desktop app
+
+`gui/` holds a small Rust desktop app (egui) that does the same steps from a window: it checks the software and inputs, offers to create the environments and download what is missing, runs the pipeline and the reports with the right options, streams the log, and opens the finished reports. It runs one job at a time and shows memory use, so a 15 GB laptop is not overloaded.
+
+![Setup tab](docs/gui/setup.png)
+
+Linux only. Build it with Rust (stable) and run it from the repo, or download `dream-gui-linux-x86_64` from the latest CI run:
+
+```bash
+cd gui && cargo build --release
+./target/release/dream-gui
+```
+
+The result is a single 14 MB executable; it remembers the DREAM folder you choose.
+
 A quick check of the pipeline on simulated data (a few minutes, also run by CI on every push):
 
 ```bash
@@ -95,4 +110,5 @@ scripts/      input downloads with checksums
 results/      analysis tables and figures (alignments and raw counts are not tracked)
 docs/         rendered reports
 tests/        simulated test data and the count check used by CI
+gui/          Rust desktop app (egui) that runs the steps above
 ```

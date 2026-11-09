@@ -1,0 +1,18 @@
+[package]
+name = "dream-gui"
+version = "0.1.0"
+edition = "2024"
+description = "Desktop launcher for the DREAM RNA-seq and drug repurposing workflow"
+license = "MIT"
+
+[dependencies]
+eframe = { version = "0.37.0", default-features = false, features = ["glow", "wayland", "x11", "accesskit", "default_fonts"] }
+rfd = "0.18.0"
+
+[features]
+# Dev only: with DREAM_GUI_SHOT=file.ppm, saves the window as an image and exits (for design review)
+screenshot = []
+
+[profile.release]
+strip = true
+lto = "thin"

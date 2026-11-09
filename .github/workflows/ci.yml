@@ -32,3 +32,22 @@ jobs:
 
       - name: Check counts match the simulation
         run: python tests/check_counts.py results/test
+
+  gui:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: gui
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test the desktop app
+        run: cargo test --locked
+
+      - name: Build the release binary
+        run: cargo build --release --locked
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dream-gui-linux-x86_64
+          path: gui/target/release/dream-gui
