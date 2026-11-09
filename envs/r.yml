@@ -1,4 +1,4 @@
-name: jobseqr-r
+name: dream-r
 channels:
   - conda-forge
   - bioconda

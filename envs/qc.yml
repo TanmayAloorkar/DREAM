@@ -1,4 +1,4 @@
-name: jobseqr-qc
+name: dream-qc
 channels:
   - conda-forge
   - bioconda

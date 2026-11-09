@@ -1,4 +1,4 @@
-name: jobseqr-align
+name: dream-align
 channels:
   - conda-forge
   - bioconda
