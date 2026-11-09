@@ -1,0 +1,181 @@
+---
+title: "DREAM: which drugs look like trametinib?"
+subtitle: "GSE197555 A549 signature queried against LINCS 2020 with signatureSearch"
+format:
+  html:
+    embed-resources: true
+    toc: true
+    code-fold: true
+execute:
+  warning: false
+  message: false
+params:
+  deseq2: "../results/GSE197555_A549/deseq2/deseq2_results.tsv"
+  lincs: "../data/lincs/lincs2020.h5"
+  n_genes: 150
+  positive_control_moa: "MEK inhibitor"
+  workers: 4
+  outdir: "../results/GSE197555_A549/lincs"
+---
+
+The Connectivity Map idea: if a drug's expression signature in cells looks like the trametinib signature, the drug probably hits the same biology; if it looks like the opposite, it pushes the pathway the other way. Here the A549 trametinib signature is compared with every compound signature in LINCS 2020 (136,460 signatures from about 30,000 compounds in 58 cell lines, moderated z-scores on 12,328 genes).
+
+CLUE.io, the original query service, has been retired, so the query runs locally with signatureSearch's implementation of the LINCS connectivity score. `scripts/download_lincs.sh` fetches the reference file (6.3 GB) and checks its sha256.
+
+Because trametinib and several other MEK inhibitors are in LINCS, the query has a built-in positive control: they should come out as the strongest mimics.
+
+```{r setup}
+library(signatureSearch)
+library(rhdf5)
+library(fgsea)
+library(ggrepel)
+library(tidyverse)
+
+dir.create(file.path(params$outdir, "figures"), recursive = TRUE, showWarnings = FALSE)
+theme_set(theme_bw(base_size = 12))
+```
+
+## Query signature
+
+The LINCS method takes an up set and a down set of Entrez genes. The strongest `r params$n_genes` up and down genes by shrunken fold change are used (padj < 0.05, baseMean ≥ 100), keeping only genes measured in LINCS.
+
+```{r signature}
+lincs_genes <- as.character(h5read(params$lincs, "rownames"))
+de <- read_tsv(params$deseq2, show_col_types = FALSE) |>
+  mutate(entrez = as.character(entrez)) |>
+  filter(padj < 0.05, baseMean >= 100, entrez %in% lincs_genes) |>
+  distinct(entrez, .keep_all = TRUE)
+up <- de |> filter(log2FC_shrunk > 0) |> slice_max(log2FC_shrunk, n = params$n_genes)
+down <- de |> filter(log2FC_shrunk < 0) |> slice_min(log2FC_shrunk, n = params$n_genes)
+write_tsv(bind_rows(up = up, down = down, .id = "set") |> select(set, gene_id, symbol, entrez, log2FC_shrunk, padj),
+          file.path(params$outdir, "query_signature.tsv"))
+tibble(up = nrow(up), down = nrow(down), lincs_genes = length(lincs_genes))
+```
+
+## Connectivity query
+
+Each reference signature (one compound in one cell line) gets a weighted connectivity score (WTCS), normalised within cell line and direction to give NCS. Positive NCS means the compound mimics the trametinib signature; negative means it reverses it.
+
+```{r query}
+qsig <- qSig(query = list(upset = up$entrez, downset = down$entrez), gess_method = "LINCS", refdb = params$lincs)
+res <- gess_lincs(qsig, sortby = "NCS", tau = FALSE, workers = params$workers, addAnnotations = FALSE)
+
+data("lincs_pert_info2")
+annot <- lincs_pert_info2 |> distinct(pert_id, .keep_all = TRUE) |> select(pert_id, pert_iname, MOA, target, max_phase)
+hits <- result(res) |>
+  as_tibble() |>
+  left_join(annot, by = c(pert = "pert_id")) |>
+  mutate(pert_iname = coalesce(pert_iname, pert))
+write_tsv(hits, file.path(params$outdir, "lincs_connectivity.tsv.gz"))
+tibble(signatures = nrow(hits), compounds = n_distinct(hits$pert_iname), cell_lines = n_distinct(hits$cell))
+```
+
+## Positive control: MEK inhibitors
+
+```{r control}
+hits <- hits |> mutate(control = if_else(str_detect(coalesce(MOA, ""), fixed(params$positive_control_moa)),
+                                          params$positive_control_moa, "other"))
+ctrl_test <- wilcox.test(NCS ~ control, data = hits |> mutate(control = fct_relevel(control, params$positive_control_moa)),
+                         alternative = "greater")
+ctrl <- hits |> group_by(control) |> summarise(signatures = n(), median_NCS = median(NCS), .groups = "drop")
+ctrl
+ctrl_test$p.value
+
+p_ctrl <- ggplot(hits, aes(NCS, colour = control)) +
+  geom_density() +
+  scale_colour_manual(values = setNames(c("#c0392b", "grey50"), c(params$positive_control_moa, "other"))) +
+  labs(x = "NCS (positive = mimics trametinib)", y = "Density", colour = NULL)
+ggsave(file.path(params$outdir, "figures", "positive_control.png"), p_ctrl, width = 6, height = 3.5, dpi = 150)
+p_ctrl
+
+# The query is only trustworthy if drugs with the same mechanism come out as mimics
+stopifnot(ctrl$median_NCS[ctrl$control == params$positive_control_moa] > 0, ctrl_test$p.value < 0.05)
+```
+
+**Reading:** the 344 MEK inhibitor signatures have a median NCS near 1, against 0 for everything else (Wilcoxon p ≈ 1e-78). In A549 itself, selumetinib, PD-0325901 and trametinib each reach NCS 2.1-2.2. The A549 RNA-seq signature and the LINCS L1000 profiles come from different labs and platforms, so this agreement shows the query recovers mechanism, not just matching noise.
+
+## Compound ranking
+
+About two thirds of signatures score exactly 0: the LINCS method sets the score to zero when the up and down genes move the same way. A per-signature median is therefore 0 for most compounds. Instead each compound gets signatureSearch's summary across cell lines, NCSct: the 67th or 33rd percentile of its NCS values, whichever is larger in magnitude. Compounds with fewer than 3 signatures are dropped.
+
+```{r compounds}
+cmp <- hits |>
+  group_by(pert) |>
+  summarise(pert_iname = first(pert_iname), NCSct = first(NCSct), signatures = n(), cell_lines = n_distinct(cell),
+            MOA = first(MOA), target = first(target), max_phase = first(max_phase), .groups = "drop") |>
+  filter(signatures >= 3) |>
+  arrange(desc(NCSct)) |>
+  mutate(rank = row_number())
+write_tsv(cmp, file.path(params$outdir, "compound_ranking.tsv"))
+
+cmp |> filter(str_detect(coalesce(MOA, ""), fixed(params$positive_control_moa))) |>
+  select(rank, pert, pert_iname, NCSct, signatures, max_phase) |>
+  knitr::kable(digits = 2, caption = paste("Compounds annotated", params$positive_control_moa, "(rank out of", nrow(cmp), ")"))
+```
+
+**Reading:** MEK inhibitors take ranks 1, 2, 3, 5 and 6 of 13,205 compounds, and rank 4 is AZD-8330, a MEK inhibitor that simply lacks a mechanism annotation in LINCS. The weak scorers are compounds annotated MEK inhibitor for indirect or off-target reasons (arctigenin, nobiletin) and BIX-02189, which targets MEK5 rather than MEK1/2.
+
+## Mechanism-of-action enrichment
+
+Compounds are grouped by annotated mechanism and tested for enrichment at the top (mimics) or bottom (reversers) of the ranking.
+
+```{r moa}
+moa_sets <- cmp |>
+  filter(!is.na(MOA)) |>
+  separate_longer_delim(MOA, ";") |>
+  mutate(MOA = str_trim(MOA)) |>
+  (\(x) split(x$pert, x$MOA))()
+set.seed(1)
+moa <- fgsea(moa_sets, setNames(cmp$NCSct, cmp$pert), minSize = 5, maxSize = 500) |>
+  as_tibble() |>
+  arrange(pval)
+write_tsv(moa |> mutate(leadingEdge = map_chr(leadingEdge, \(x) paste(cmp$pert_iname[match(x, cmp$pert)], collapse = ";"))),
+          file.path(params$outdir, "moa_enrichment.tsv"))
+
+p_moa <- moa |>
+  filter(padj < 0.05) |>
+  slice_max(abs(NES), n = 25) |>
+  mutate(pathway = fct_reorder(pathway, NES)) |>
+  ggplot(aes(NES, pathway, fill = NES > 0)) +
+  geom_col() +
+  scale_fill_manual(values = c(`TRUE` = "#c0392b", `FALSE` = "#2471a3"), labels = c(`TRUE` = "mimics", `FALSE` = "reverses"), name = NULL) +
+  labs(x = "Normalised enrichment score", y = NULL)
+ggsave(file.path(params$outdir, "figures", "moa_enrichment.png"), p_moa, width = 7, height = 6, dpi = 150)
+p_moa
+```
+
+```{r raf}
+cmp |> filter(str_detect(coalesce(MOA, ""), "RAF inhibitor")) |>
+  select(rank, pert_iname, NCSct, signatures) |>
+  knitr::kable(digits = 2, caption = "RAF inhibitors")
+```
+
+**Reading:** besides MEK inhibitors, glucocorticoid receptor agonists are the most enriched mimics. Glucocorticoids induce DUSP1 (MKP-1), a phosphatase that switches ERK off, which is a plausible route to the same transcriptional outcome. HSP90 inhibitors (alvespimycin, geldanamycin) also mimic, consistent with RAF and EGFR being HSP90 clients. Most RAF inhibitors mimic MEK blockade (AZ-628, CEP-32496, GW-5074, SB-590885, regorafenib), but the clinical BRAF V600E inhibitors vemurafenib and dabrafenib land among the strongest reversers. That matches the known paradoxical activation of ERK by these drugs in BRAF wild-type cells, which are most of the LINCS panel. No mechanism is significantly enriched among the reversers.
+
+## Repurposing candidates
+
+Approved drugs (clinical phase 4) that mimic the trametinib signature without being annotated to the RAF–MEK–ERK axis. These are drugs whose effect on cells resembles MEK blockade through some other route.
+
+```{r candidates}
+mapk_axis <- "MEK inhibitor|RAF inhibitor|ERK inhibitor|MAP kinase inhibitor"
+cand <- cmp |>
+  filter(max_phase == 4, NCSct > 0, !str_detect(coalesce(MOA, ""), mapk_axis)) |>
+  distinct(pert_iname, .keep_all = TRUE) |>
+  slice_head(n = 20)
+write_tsv(cand, file.path(params$outdir, "repurposing_candidates.tsv"))
+cand |> select(rank, pert_iname, MOA, target, NCSct, cell_lines) |> knitr::kable(digits = 2)
+```
+
+**Reading:** the approved list is dominated by glucocorticoids (dexamethasone, mometasone, budesonide and others), plus neratinib (EGFR/HER2, upstream of MEK) and bosutinib (Src/Abl). These are hypotheses, not recommendations: a matching expression signature does not show anti-tumour effect, and the steroids' high scores may partly reflect a shared anti-inflammatory programme (the trametinib signature also lowers interferon and NF-kB targets). Some have three signatures only (dexamethasone, capecitabine), so their scores are the least stable.
+
+## Summary
+
+- The local LINCS 2020 query passes its positive control: MEK inhibitors are the top mimics of the A549 trametinib signature, including trametinib itself.
+- Other mimics make mechanistic sense (pan-RAF and HSP90 inhibitors), and type I BRAF inhibitors reverse the signature, as paradoxical ERK activation predicts.
+- Glucocorticoids are the strongest non-MAPK mimic class among approved drugs, a testable hypothesis that would need DUSP1 and phospho-ERK measurements to support.
+
+## Session info
+
+```{r session}
+sessionInfo()
+```

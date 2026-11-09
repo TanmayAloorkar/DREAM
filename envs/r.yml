@@ -22,3 +22,4 @@ dependencies:
   - bioconductor-omnipathr=4.0.3
   - bioconductor-gsva=2.4.9
   - bioconductor-tcgabiolinks=2.38.0
+  - bioconductor-signaturesearch=1.24.0

@@ -19,3 +19,4 @@ analysis/*_files/
 results/test/
 !results/*/decoupler/**
 !results/*/tcga_luad/**
+!results/*/lincs/**
