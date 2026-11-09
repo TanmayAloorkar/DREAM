@@ -1,0 +1,7 @@
+sample,run,fastq_1,fastq_2,condition,geo_condition
+H460_control_1,,data/h460_subset/SRR18159283_1.fastq.gz,data/h460_subset/SRR18159283_2.fastq.gz,control,control
+H460_control_2,,data/h460_subset/SRR18159282_1.fastq.gz,data/h460_subset/SRR18159282_2.fastq.gz,control,control
+H460_control_3,,data/h460_subset/SRR18159281_1.fastq.gz,data/h460_subset/SRR18159281_2.fastq.gz,control,control
+H460_trametinib_1,,data/h460_subset/SRR18159280_1.fastq.gz,data/h460_subset/SRR18159280_2.fastq.gz,trametinib,trametinib
+H460_trametinib_2,,data/h460_subset/SRR18159278_1.fastq.gz,data/h460_subset/SRR18159278_2.fastq.gz,trametinib,trametinib
+H460_trametinib_3,,data/h460_subset/SRR18159277_1.fastq.gz,data/h460_subset/SRR18159277_2.fastq.gz,trametinib,trametinib

@@ -1,7 +1,7 @@
-sample,run,fastq_1,fastq_2,condition
-A549_control_1,SRR18159276,,,control
-A549_control_2,SRR18159279,,,control
-A549_control_3,SRR18159275,,,control
-A549_trametinib_1,SRR18159274,,,trametinib
-A549_trametinib_2,SRR18159273,,,trametinib
-A549_trametinib_3,SRR18159272,,,trametinib
+sample,run,fastq_1,fastq_2,condition,geo_condition,gsm
+A549_control_1,SRR18159276,,,trametinib,control,GSM5920523
+A549_control_2,SRR18159279,,,trametinib,control,GSM5920524
+A549_control_3,SRR18159275,,,trametinib,control,GSM5920525
+A549_trametinib_1,SRR18159274,,,control,trametinib,GSM5920526
+A549_trametinib_2,SRR18159273,,,control,trametinib,GSM5920527
+A549_trametinib_3,SRR18159272,,,control,trametinib,GSM5920528
