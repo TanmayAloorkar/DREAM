@@ -15,14 +15,26 @@ pub fn is_dream(dir: &Path) -> bool {
     dir.join("pipeline/main.nf").is_file() && dir.join("analysis").is_dir()
 }
 
-fn saved_path() -> Option<PathBuf> {
+fn setting_path(name: &str) -> Option<PathBuf> {
     let base = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from).or_else(|| home().map(|h| h.join(".config")))?;
-    Some(base.join("dream-gui/project"))
+    Some(base.join("dream-gui").join(name))
+}
+
+/// A small saved setting (one line in ~/.config/dream-gui/<name>).
+pub fn setting(name: &str) -> Option<String> {
+    setting_path(name).and_then(|p| fs::read_to_string(p).ok()).map(|s| s.trim().to_string())
+}
+
+pub fn save_setting(name: &str, value: &str) {
+    if let Some(p) = setting_path(name) {
+        let _ = fs::create_dir_all(p.parent().unwrap());
+        let _ = fs::write(p, value);
+    }
 }
 
 /// Saved choice first, then the working directory, then the folders above the executable.
 pub fn find() -> Option<PathBuf> {
-    let saved = saved_path().and_then(|p| fs::read_to_string(p).ok()).map(|s| PathBuf::from(s.trim()));
+    let saved = setting("project").map(PathBuf::from);
     let cwd = std::env::current_dir().ok();
     let exe = std::env::current_exe().ok();
     saved
@@ -33,10 +45,7 @@ pub fn find() -> Option<PathBuf> {
 }
 
 pub fn remember(dir: &Path) {
-    if let Some(p) = saved_path() {
-        let _ = fs::create_dir_all(p.parent().unwrap());
-        let _ = fs::write(p, dir.to_string_lossy().as_bytes());
-    }
+    save_setting("project", &dir.to_string_lossy());
 }
 
 fn home() -> Option<PathBuf> {

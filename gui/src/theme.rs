@@ -1,23 +1,68 @@
-//! Palette, fonts and widget style. Colours come from the DREAM report figures.
+//! Palettes, fonts and widget style. Colours come from the DREAM report figures
+//! (blue #2471a3, red #c0392b); the dark palette lightens them to keep contrast.
 
 use eframe::egui::{
-    self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Shadow, Stroke,
-    TextStyle, Theme, vec2,
+    self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Shadow, Stroke, TextStyle,
+    Theme, ThemePreference, Visuals, vec2,
 };
 use std::sync::Arc;
 
-pub const BG: Color32 = Color32::from_rgb(0xFA, 0xFA, 0xF9);
-pub const PANE: Color32 = Color32::WHITE;
-pub const INK: Color32 = Color32::from_rgb(0x1C, 0x20, 0x24);
-pub const MUTED: Color32 = Color32::from_rgb(0x66, 0x70, 0x7A);
-pub const HAIRLINE: Color32 = Color32::from_rgb(0xDA, 0xDD, 0xE1);
-pub const HOVER: Color32 = Color32::from_rgb(0xF2, 0xF4, 0xF6);
-pub const PRESSED: Color32 = Color32::from_rgb(0xE6, 0xE9, 0xEC);
-pub const ACCENT: Color32 = Color32::from_rgb(0x24, 0x71, 0xA3);
-pub const ACCENT_SOFT: Color32 = Color32::from_rgb(0xE8, 0xF0, 0xF7);
-pub const DANGER: Color32 = Color32::from_rgb(0xC0, 0x39, 0x2B);
-
 pub const RADIUS: u8 = 6;
+
+pub struct Palette {
+    pub bg: Color32,
+    pub pane: Color32,
+    pub ink: Color32,
+    pub muted: Color32,
+    pub hairline: Color32,
+    pub hover: Color32,
+    pub pressed: Color32,
+    /// border of controls at rest; darker than hairline so empty checkboxes stay visible
+    pub border: Color32,
+    pub border_hover: Color32,
+    /// progress lines, running state, links
+    pub accent: Color32,
+    /// fill behind white text (primary buttons, finished step numbers)
+    pub accent_fill: Color32,
+    pub accent_soft: Color32,
+    pub danger: Color32,
+}
+
+pub const LIGHT: Palette = Palette {
+    bg: Color32::from_rgb(0xFA, 0xFA, 0xF9),
+    pane: Color32::WHITE,
+    ink: Color32::from_rgb(0x1C, 0x20, 0x24),
+    muted: Color32::from_rgb(0x66, 0x70, 0x7A),
+    hairline: Color32::from_rgb(0xDA, 0xDD, 0xE1),
+    hover: Color32::from_rgb(0xF2, 0xF4, 0xF6),
+    pressed: Color32::from_rgb(0xE6, 0xE9, 0xEC),
+    border: Color32::from_rgb(0xC6, 0xCB, 0xD1),
+    border_hover: Color32::from_rgb(0xB8, 0xBE, 0xC5),
+    accent: Color32::from_rgb(0x24, 0x71, 0xA3),
+    accent_fill: Color32::from_rgb(0x24, 0x71, 0xA3),
+    accent_soft: Color32::from_rgb(0xE8, 0xF0, 0xF7),
+    danger: Color32::from_rgb(0xC0, 0x39, 0x2B),
+};
+
+pub const DARK: Palette = Palette {
+    bg: Color32::from_rgb(0x14, 0x17, 0x19),
+    pane: Color32::from_rgb(0x1C, 0x20, 0x24),
+    ink: Color32::from_rgb(0xE4, 0xE7, 0xEA),
+    muted: Color32::from_rgb(0x98, 0xA1, 0xAA),
+    hairline: Color32::from_rgb(0x2C, 0x32, 0x38),
+    hover: Color32::from_rgb(0x25, 0x2A, 0x2F),
+    pressed: Color32::from_rgb(0x2F, 0x35, 0x3B),
+    border: Color32::from_rgb(0x3E, 0x45, 0x4C),
+    border_hover: Color32::from_rgb(0x52, 0x5A, 0x62),
+    accent: Color32::from_rgb(0x5A, 0xA6, 0xDB),
+    accent_fill: Color32::from_rgb(0x27, 0x71, 0xA8),
+    accent_soft: Color32::from_rgb(0x1D, 0x34, 0x48),
+    danger: Color32::from_rgb(0xE2, 0x67, 0x5C),
+};
+
+pub fn pal(visuals: &Visuals) -> &'static Palette {
+    if visuals.dark_mode { &DARK } else { &LIGHT }
+}
 
 pub fn semibold(size: f32) -> FontId {
     FontId::new(size, FontFamily::Name("semibold".into()))
@@ -27,7 +72,31 @@ pub fn mono(size: f32) -> FontId {
     FontId::monospace(size)
 }
 
-pub fn install(ctx: &egui::Context) {
+pub fn preference_name(p: ThemePreference) -> &'static str {
+    match p {
+        ThemePreference::System => "Auto",
+        ThemePreference::Light => "Light",
+        ThemePreference::Dark => "Dark",
+    }
+}
+
+pub fn next(p: ThemePreference) -> ThemePreference {
+    match p {
+        ThemePreference::System => ThemePreference::Light,
+        ThemePreference::Light => ThemePreference::Dark,
+        ThemePreference::Dark => ThemePreference::System,
+    }
+}
+
+pub fn parse(s: &str) -> ThemePreference {
+    match s.trim() {
+        "light" | "Light" => ThemePreference::Light,
+        "dark" | "Dark" => ThemePreference::Dark,
+        _ => ThemePreference::System,
+    }
+}
+
+pub fn install(ctx: &egui::Context, preference: ThemePreference) {
     let mut fonts = FontDefinitions::default();
     for (name, bytes) in [
         ("inter", &include_bytes!("../assets/fonts/Inter-Regular.ttf")[..]),
@@ -45,57 +114,60 @@ pub fn install(ctx: &egui::Context) {
         .insert(FontFamily::Name("semibold".into()), [vec!["inter-semibold".into()], fallback].concat());
     ctx.set_fonts(fonts);
 
-    ctx.set_theme(Theme::Light);
-    ctx.style_mut_of(Theme::Light, |style| {
-        style.text_styles = [
-            (TextStyle::Heading, semibold(20.0)),
-            (TextStyle::Body, FontId::proportional(14.0)),
-            (TextStyle::Button, FontId::proportional(14.0)),
-            (TextStyle::Monospace, mono(12.5)),
-            (TextStyle::Small, FontId::proportional(12.0)),
-        ]
-        .into();
+    for (theme, p) in [(Theme::Light, &LIGHT), (Theme::Dark, &DARK)] {
+        ctx.style_mut_of(theme, |style| {
+            style.text_styles = [
+                (TextStyle::Heading, semibold(20.0)),
+                (TextStyle::Body, FontId::proportional(14.0)),
+                (TextStyle::Button, FontId::proportional(14.0)),
+                (TextStyle::Monospace, mono(12.5)),
+                (TextStyle::Small, FontId::proportional(12.0)),
+            ]
+            .into();
 
-        let s = &mut style.spacing;
-        s.item_spacing = vec2(8.0, 8.0);
-        s.button_padding = vec2(12.0, 6.0);
-        s.interact_size.y = 30.0;
+            let s = &mut style.spacing;
+            s.item_spacing = vec2(8.0, 8.0);
+            s.button_padding = vec2(12.0, 6.0);
+            s.interact_size.y = 30.0;
 
-        let v = &mut style.visuals;
-        v.dark_mode = false;
-        v.panel_fill = BG;
-        v.window_fill = PANE;
-        v.window_stroke = Stroke::new(1.0, HAIRLINE);
-        v.window_shadow = Shadow::NONE;
-        v.popup_shadow = Shadow::NONE;
-        v.window_corner_radius = CornerRadius::same(RADIUS);
-        v.menu_corner_radius = CornerRadius::same(RADIUS);
-        v.extreme_bg_color = PANE;
-        v.text_edit_bg_color = Some(PANE);
-        v.faint_bg_color = HOVER;
-        v.code_bg_color = HOVER;
-        v.hyperlink_color = ACCENT;
-        v.error_fg_color = DANGER;
-        v.selection.bg_fill = ACCENT_SOFT;
-        v.selection.stroke = Stroke::new(1.0, ACCENT);
-        v.override_text_color = None;
+            let v = &mut style.visuals;
+            v.dark_mode = theme == Theme::Dark;
+            v.panel_fill = p.bg;
+            v.window_fill = p.pane;
+            v.window_stroke = Stroke::new(1.0, p.hairline);
+            v.window_shadow = Shadow::NONE;
+            v.popup_shadow = Shadow::NONE;
+            v.window_corner_radius = CornerRadius::same(RADIUS);
+            v.menu_corner_radius = CornerRadius::same(RADIUS);
+            v.extreme_bg_color = p.pane;
+            v.text_edit_bg_color = Some(p.pane);
+            v.faint_bg_color = p.hover;
+            v.code_bg_color = p.hover;
+            v.hyperlink_color = p.accent;
+            v.error_fg_color = p.danger;
+            v.weak_text_color = Some(p.muted);
+            v.selection.bg_fill = p.accent_soft;
+            v.selection.stroke = Stroke::new(1.0, p.accent);
+            v.override_text_color = None;
 
-        let w = &mut v.widgets;
-        w.noninteractive.bg_stroke = Stroke::new(1.0, HAIRLINE);
-        w.noninteractive.fg_stroke = Stroke::new(1.0, INK);
-        for (state, fill, border) in [
-            // a shade darker than HAIRLINE so empty checkboxes and fields stay visible on white
-            (&mut w.inactive, PANE, Color32::from_rgb(0xC6, 0xCB, 0xD1)),
-            (&mut w.hovered, HOVER, Color32::from_rgb(0xC4, 0xC9, 0xCF)),
-            (&mut w.active, PRESSED, Color32::from_rgb(0xB8, 0xBE, 0xC5)),
-            (&mut w.open, PRESSED, Color32::from_rgb(0xB8, 0xBE, 0xC5)),
-        ] {
-            state.bg_fill = fill;
-            state.weak_bg_fill = fill;
-            state.bg_stroke = Stroke::new(1.0, border);
-            state.fg_stroke = Stroke::new(1.0, INK);
-            state.corner_radius = CornerRadius::same(RADIUS);
-            state.expansion = 0.0;
-        }
-    });
+            let w = &mut v.widgets;
+            w.noninteractive.bg_fill = p.pane;
+            w.noninteractive.bg_stroke = Stroke::new(1.0, p.hairline);
+            w.noninteractive.fg_stroke = Stroke::new(1.0, p.ink);
+            for (state, fill, border) in [
+                (&mut w.inactive, p.pane, p.border),
+                (&mut w.hovered, p.hover, p.border_hover),
+                (&mut w.active, p.pressed, p.border_hover),
+                (&mut w.open, p.pressed, p.border_hover),
+            ] {
+                state.bg_fill = fill;
+                state.weak_bg_fill = fill;
+                state.bg_stroke = Stroke::new(1.0, border);
+                state.fg_stroke = Stroke::new(1.0, p.ink);
+                state.corner_radius = CornerRadius::same(RADIUS);
+                state.expansion = 0.0;
+            }
+        });
+    }
+    ctx.set_theme(preference);
 }

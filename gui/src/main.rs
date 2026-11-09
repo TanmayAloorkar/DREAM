@@ -44,6 +44,7 @@ struct App {
     checked: Instant,
     log_open: bool,
     confirm_quit: bool,
+    theme: egui::ThemePreference,
     // pipeline form
     samplesheet: String,
     strandedness: Option<&'static str>,
@@ -61,7 +62,9 @@ struct App {
 
 impl App {
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        theme::install(&cc.egui_ctx);
+        // DREAM_GUI_THEME overrides the saved choice (used for screenshots)
+        let theme = theme::parse(&std::env::var("DREAM_GUI_THEME").ok().or_else(|| project::setting("theme")).unwrap_or_default());
+        theme::install(&cc.egui_ctx, theme);
         let tab = match std::env::var("DREAM_GUI_TAB").as_deref() {
             Ok("run") => Tab::Run,
             Ok("results") => Tab::Results,
@@ -78,6 +81,7 @@ impl App {
             checked: Instant::now(),
             log_open: false,
             confirm_quit: false,
+            theme,
             samplesheet: "samplesheets/GSE197555_A549.csv".into(),
             strandedness: None,
             outdir: "results/GSE197555_A549".into(),
@@ -181,7 +185,7 @@ impl eframe::App for App {
         let mut actions = Vec::new();
         self.top_bar(ui);
         self.log_drawer(ui, &mut actions);
-        egui::CentralPanel::default().frame(Frame::new().fill(BG)).show(ui, |ui| {
+        egui::CentralPanel::default().frame(Frame::new().fill(pal(ui.visuals()).bg)).show(ui, |ui| {
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 // centred column; Margin is i8, so side space is added as plain space instead
                 let width = (ui.available_width() - 48.0).min(CONTENT_WIDTH);
@@ -243,7 +247,7 @@ fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
 fn primary(ui: &mut Ui, text: &str, blocked: Option<&str>) -> bool {
     let enabled = blocked.is_none();
     let button = Button::new(RichText::new(text).font(semibold(14.0)).color(Color32::WHITE))
-        .fill(ACCENT)
+        .fill(pal(ui.visuals()).accent_fill)
         .stroke(Stroke::NONE)
         .corner_radius(CornerRadius::same(RADIUS))
         .min_size(vec2(0.0, 34.0));
@@ -263,9 +267,10 @@ fn secondary(ui: &mut Ui, text: &str, blocked: Option<&str>) -> bool {
 }
 
 fn card(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
+    let p = pal(ui.visuals());
     Frame::new()
-        .fill(PANE)
-        .stroke(Stroke::new(1.0, HAIRLINE))
+        .fill(p.pane)
+        .stroke(Stroke::new(1.0, p.hairline))
         .corner_radius(CornerRadius::same(RADIUS))
         .inner_margin(Margin::symmetric(16, 12))
         .show(ui, |ui| {
@@ -275,16 +280,17 @@ fn card(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
 }
 
 fn muted(text: impl Into<String>) -> RichText {
-    RichText::new(text).color(MUTED)
+    RichText::new(text).weak()
 }
 
 fn mono_muted(text: impl Into<String>) -> RichText {
-    RichText::new(text).font(mono(12.0)).color(MUTED)
+    RichText::new(text).font(mono(12.0)).weak()
 }
 
 /// A numbered protocol step: number circle in the gutter, a connector line to the next step,
 /// and content to the right. The circle fills when the step is done.
 fn step(ui: &mut Ui, n: u8, title: &str, subtitle: &str, done: bool, last: bool, add: impl FnOnce(&mut Ui)) {
+    let p = pal(ui.visuals());
     let t = ui.ctx().animate_bool_with_time(Id::unique(("step-done", n)), done, 0.3);
     let left = ui.cursor().left();
     let top = ui.cursor().top();
@@ -292,7 +298,7 @@ fn step(ui: &mut Ui, n: u8, title: &str, subtitle: &str, done: bool, last: bool,
         .horizontal_top(|ui| {
             ui.add_space(44.0);
             ui.vertical(|ui| {
-                ui.label(RichText::new(title).font(semibold(16.0)).color(INK));
+                ui.label(RichText::new(title).font(semibold(16.0)).strong());
                 if !subtitle.is_empty() {
                     ui.label(muted(subtitle).size(13.0));
                 }
@@ -306,30 +312,31 @@ fn step(ui: &mut Ui, n: u8, title: &str, subtitle: &str, done: bool, last: bool,
     let c = egui::pos2(left + 14.0, top + 11.0);
     if !last {
         let (a, b) = (egui::pos2(c.x, c.y + 17.0), egui::pos2(c.x, rect.bottom() + SECTION_GAP - 6.0));
-        painter.line_segment([a, b], Stroke::new(2.0, HAIRLINE));
-        painter.line_segment([a, egui::pos2(c.x, a.y + (b.y - a.y) * t)], Stroke::new(2.0, ACCENT));
+        painter.line_segment([a, b], Stroke::new(2.0, p.hairline));
+        painter.line_segment([a, egui::pos2(c.x, a.y + (b.y - a.y) * t)], Stroke::new(2.0, p.accent));
     }
-    painter.circle(c, 13.0, mix(PANE, ACCENT, t), Stroke::new(1.0, mix(HAIRLINE, ACCENT, t)));
-    painter.text(c, Align2::CENTER_CENTER, n.to_string(), semibold(13.0), mix(MUTED, Color32::WHITE, t));
+    painter.circle(c, 13.0, mix(p.pane, p.accent_fill, t), Stroke::new(1.0, mix(p.border, p.accent_fill, t)));
+    painter.text(c, Align2::CENTER_CENTER, n.to_string(), semibold(13.0), mix(p.muted, Color32::WHITE, t));
     ui.add_space(SECTION_GAP);
 }
 
 fn glyph(ui: &mut Ui, state: State) {
+    let pal = pal(ui.visuals());
     let (rect, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
     let p = ui.painter();
     let c = rect.center();
     match state {
         State::Ok => {
-            let s = Stroke::new(1.8, INK);
+            let s = Stroke::new(1.8, pal.ink);
             p.line_segment([c + vec2(-5.0, 0.5), c + vec2(-1.5, 4.0)], s);
             p.line_segment([c + vec2(-1.5, 4.0), c + vec2(5.0, -4.0)], s);
         }
         State::Missing => {
-            p.line_segment([c + vec2(-4.5, 0.0), c + vec2(4.5, 0.0)], Stroke::new(1.8, DANGER));
+            p.line_segment([c + vec2(-4.5, 0.0), c + vec2(4.5, 0.0)], Stroke::new(1.8, pal.danger));
         }
         State::Partial => {
-            p.circle_stroke(c, 5.0, Stroke::new(1.6, MUTED));
-            p.line_segment([c + vec2(0.0, -5.0), c + vec2(0.0, 5.0)], Stroke::new(1.6, MUTED));
+            p.circle_stroke(c, 5.0, Stroke::new(1.6, pal.muted));
+            p.line_segment([c + vec2(0.0, -5.0), c + vec2(0.0, 5.0)], Stroke::new(1.6, pal.muted));
         }
     }
 }
@@ -344,7 +351,7 @@ fn check_rows(ui: &mut Ui, checks: &[&project::Check]) {
             }
             ui.horizontal(|ui| {
                 glyph(ui, c.state);
-                ui.label(RichText::new(c.label).color(INK));
+                ui.label(c.label);
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.label(mono_muted(&c.detail));
                 });
@@ -367,23 +374,24 @@ fn ago(t: SystemTime) -> String {
 
 impl App {
     fn top_bar(&mut self, ui: &mut Ui) {
+        let p = pal(ui.visuals());
         let response = egui::Panel::top("top")
             .exact_size(56.0)
-            .frame(Frame::new().fill(PANE).inner_margin(Margin::symmetric(24, 0)))
+            .frame(Frame::new().fill(p.pane).inner_margin(Margin::symmetric(24, 0)))
             .show(ui, |ui| {
                 let bottom = ui.max_rect().bottom();
                 ui.horizontal_centered(|ui| {
-                    ui.label(RichText::new("DREAM").font(semibold(17.0)).color(INK));
+                    ui.label(RichText::new("DREAM").font(semibold(17.0)).strong());
                     ui.label(muted("RNA-seq to drug repurposing").size(12.5));
                     ui.add_space(28.0);
                     let mut active = None;
                     for (i, (tab, name)) in [(Tab::Setup, "Setup"), (Tab::Run, "Run"), (Tab::Results, "Results")].into_iter().enumerate() {
                         let text = format!("{}  {name}", i + 1);
-                        let size = ui.painter().layout_no_wrap(text.clone(), semibold(14.0), INK).size();
+                        let size = ui.painter().layout_no_wrap(text.clone(), semibold(14.0), p.ink).size();
                         let (rect, r) = ui.allocate_exact_size(size, Sense::click());
                         let r = r.on_hover_cursor(egui::CursorIcon::PointingHand);
                         let selected = self.tab == tab;
-                        let color = if selected || r.hovered() { INK } else { MUTED };
+                        let color = if selected || r.hovered() { p.ink } else { p.muted };
                         ui.painter().text(rect.left_center(), Align2::LEFT_CENTER, text, semibold(14.0), color);
                         if r.clicked() {
                             self.tab = tab;
@@ -400,10 +408,17 @@ impl App {
                         ui.painter().rect_filled(
                             egui::Rect::from_min_size(egui::pos2(x, bottom - 2.0), vec2(w, 2.0)),
                             0.0,
-                            ACCENT,
+                            p.accent,
                         );
                     }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let label = format!("Theme: {}", theme::preference_name(self.theme));
+                        if ui.link(RichText::new(label).size(13.0)).on_hover_text("Auto follows the system setting").clicked() {
+                            self.theme = theme::next(self.theme);
+                            ui.ctx().set_theme(self.theme);
+                            project::save_setting("theme", &format!("{:?}", self.theme).to_lowercase());
+                        }
+                        ui.add_space(20.0);
                         self.memory_meter(ui);
                         ui.add_space(20.0);
                         self.job_badge(ui);
@@ -412,32 +427,34 @@ impl App {
             })
             .response;
         let r = response.rect;
-        ui.painter().hline(r.x_range(), r.bottom(), Stroke::new(1.0, HAIRLINE));
+        ui.painter().hline(r.x_range(), r.bottom(), Stroke::new(1.0, p.hairline));
     }
 
     fn memory_meter(&self, ui: &mut Ui) {
         let Some((free, total)) = self.memory else { return };
         let used = total.saturating_sub(free);
         let share = used as f32 / total as f32;
+        let pal = pal(ui.visuals());
         let (rect, _) = ui.allocate_exact_size(vec2(84.0, 6.0), Sense::hover());
         let p = ui.painter();
-        p.rect_filled(rect, CornerRadius::same(3), HOVER);
+        p.rect_filled(rect, CornerRadius::same(3), pal.pressed);
         let fill = egui::Rect::from_min_size(rect.min, vec2(rect.width() * share, rect.height()));
-        p.rect_filled(fill, CornerRadius::same(3), if share > 0.85 { DANGER } else { ACCENT });
+        p.rect_filled(fill, CornerRadius::same(3), if share > 0.85 { pal.danger } else { pal.accent });
         let gib = |b: u64| b as f64 / (1u64 << 30) as f64;
-        ui.label(RichText::new(format!("RAM {:.1} / {:.1} GB", gib(used), gib(total))).font(mono(12.0)).color(MUTED))
+        ui.label(RichText::new(format!("RAM {:.1} / {:.1} GB", gib(used), gib(total))).font(mono(12.0)).weak())
             .on_hover_text("Memory in use on this machine. Heavy steps need about 11 GB.");
     }
 
     fn job_badge(&self, ui: &mut Ui) {
+        let p = pal(ui.visuals());
         if let Some(run) = &self.jobs.running {
-            ui.label(RichText::new(format!("{} · {}", run.name, job::elapsed(run.started.elapsed()))).font(semibold(13.0)).color(ACCENT));
-            ui.add(egui::Spinner::new().size(14.0).color(ACCENT));
+            ui.label(RichText::new(format!("{} · {}", run.name, job::elapsed(run.started.elapsed()))).font(semibold(13.0)).color(p.accent));
+            ui.add(egui::Spinner::new().size(14.0).color(p.accent));
         } else if let Some(last) = &self.jobs.last {
             let (text, color) = match (last.code, last.stopped) {
-                (_, true) => (format!("{} stopped", last.name), MUTED),
-                (Some(0), _) => (format!("{} finished · {}", last.name, job::elapsed(last.elapsed)), MUTED),
-                _ => (format!("{} failed", last.name), DANGER),
+                (_, true) => (format!("{} stopped", last.name), p.muted),
+                (Some(0), _) => (format!("{} finished · {}", last.name, job::elapsed(last.elapsed)), p.muted),
+                _ => (format!("{} failed", last.name), p.danger),
             };
             ui.label(RichText::new(text).size(13.0).color(color));
         } else {
@@ -446,7 +463,8 @@ impl App {
     }
 
     fn log_drawer(&mut self, ui: &mut Ui, actions: &mut Vec<Action>) {
-        let frame = Frame::new().fill(PANE).inner_margin(Margin::symmetric(24, 8));
+        let p = pal(ui.visuals());
+        let frame = Frame::new().fill(p.pane).inner_margin(Margin::symmetric(24, 8));
         let panel = if self.log_open {
             egui::Panel::bottom("log-open").resizable(true).default_size(220.0).min_size(120.0)
         } else {
@@ -456,7 +474,7 @@ impl App {
             .frame(frame)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Log").font(semibold(13.0)).color(INK));
+                    ui.label(RichText::new("Log").font(semibold(13.0)).strong());
                     if let Some(line) = self.jobs.log.lock().unwrap().back() {
                         ui.add(egui::Label::new(mono_muted(line.clone())).truncate());
                     }
@@ -478,14 +496,14 @@ impl App {
                     let row = ui.text_style_height(&egui::TextStyle::Monospace);
                     egui::ScrollArea::vertical().stick_to_bottom(true).auto_shrink([false, false]).show_rows(ui, row, log.len(), |ui, range| {
                         for line in log.range(range) {
-                            ui.add(egui::Label::new(RichText::new(line).font(mono(12.0)).color(INK)).extend());
+                            ui.add(egui::Label::new(RichText::new(line).font(mono(12.0))).extend());
                         }
                     });
                 }
             })
             .response;
         let r = response.rect;
-        ui.painter().hline(r.x_range(), r.top(), Stroke::new(1.0, HAIRLINE));
+        ui.painter().hline(r.x_range(), r.top(), Stroke::new(1.0, p.hairline));
     }
 
     fn quit_dialog(&mut self, ctx: &egui::Context, actions: &mut Vec<Action>) {
@@ -495,7 +513,7 @@ impl App {
         let name = self.jobs.busy().unwrap_or("A job").to_string();
         egui::Modal::new(Id::unique("quit")).show(ctx, |ui| {
             ui.set_width(380.0);
-            ui.label(RichText::new(format!("{name} is still running")).font(semibold(16.0)).color(INK));
+            ui.label(RichText::new(format!("{name} is still running")).font(semibold(16.0)).strong());
             ui.label(muted("Quitting stops it. Nextflow can resume finished tasks next time with -resume."));
             ui.add_space(8.0);
             ui.horizontal(|ui| {
@@ -517,14 +535,14 @@ impl App {
     fn setup_tab(&mut self, ui: &mut Ui, actions: &mut Vec<Action>) {
         let Some(root) = self.root.clone() else {
             ui.add_space(40.0);
-            ui.label(RichText::new("Choose your DREAM folder").font(semibold(22.0)).color(INK));
+            ui.label(RichText::new("Choose your DREAM folder").font(semibold(22.0)).strong());
             ui.label(muted("The folder you cloned from GitHub. It holds pipeline/, analysis/ and samplesheets/."));
             ui.add_space(12.0);
             if primary(ui, "Choose folder…", None) {
                 actions.push(Action::ChooseRoot);
             }
             if let Some(err) = &self.root_error {
-                ui.label(RichText::new(err).color(DANGER));
+                ui.label(RichText::new(err).color(ui.visuals().error_fg_color));
             }
             return;
         };
@@ -533,7 +551,7 @@ impl App {
 
         ui.horizontal(|ui| {
             ui.label(muted("Project"));
-            ui.label(RichText::new(project::tilde(&root)).font(mono(13.0)).color(INK));
+            ui.label(RichText::new(project::tilde(&root)).font(mono(13.0)).strong());
             if ui.link("Change").clicked() {
                 actions.push(Action::ChooseRoot);
             }
@@ -544,7 +562,7 @@ impl App {
             });
         });
         if let Some(err) = &self.root_error {
-            ui.label(RichText::new(err).color(DANGER));
+            ui.label(RichText::new(err).color(ui.visuals().error_fg_color));
         }
         ui.add_space(18.0);
 
@@ -767,7 +785,7 @@ impl App {
             return;
         };
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Results").font(semibold(20.0)).color(INK));
+            ui.label(RichText::new("Results").font(semibold(20.0)).strong());
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if secondary(ui, "Open results folder", None) {
                     actions.push(Action::Open(root.join("results")));
@@ -780,7 +798,7 @@ impl App {
         ui.add_space(14.0);
         for group in &self.reports {
             ui.horizontal(|ui| {
-                ui.label(RichText::new(group.name).font(semibold(15.0)).color(INK));
+                ui.label(RichText::new(group.name).font(semibold(15.0)).strong());
                 ui.label(mono_muted(group.reports.len().to_string()));
             });
             if group.reports.is_empty() {
@@ -793,7 +811,7 @@ impl App {
                         }
                         ui.horizontal(|ui| {
                             ui.vertical(|ui| {
-                                ui.label(RichText::new(&r.title).color(INK));
+                                ui.label(r.title.as_str());
                                 ui.label(mono_muted(r.path.strip_prefix(&root).unwrap_or(&r.path).display().to_string()));
                             });
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

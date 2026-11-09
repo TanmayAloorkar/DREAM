@@ -53,9 +53,10 @@ done
 
 ### Desktop app
 
-`gui/` holds a small Rust desktop app (egui) that does the same steps from a window: it checks the software and inputs, offers to create the environments and download what is missing, runs the pipeline and the reports with the right options, streams the log, and opens the finished reports. It runs one job at a time and shows memory use, so a 15 GB laptop is not overloaded.
+`gui/` holds a small Rust desktop app (egui) that does the same steps from a window: it checks the software and inputs, offers to create the environments and download what is missing, runs the pipeline and the reports with the right options, streams the log, and opens the finished reports. It runs one job at a time and shows memory use, so a 15 GB laptop is not overloaded. Light and dark themes follow the system setting, or can be switched from the top bar.
 
 ![Setup tab](docs/gui/setup.png)
+![Run tab in dark mode](docs/gui/run-dark.png)
 
 Linux only. Build it with Rust (stable) and run it from the repo, or download `dream-gui-linux-x86_64` from the latest CI run:
 
