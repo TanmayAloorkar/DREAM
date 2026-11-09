@@ -1,0 +1,285 @@
+---
+title: "DREAM: trametinib response in A549 cells"
+subtitle: "GSE197555 — differential expression and pathway enrichment"
+format:
+  html:
+    embed-resources: true
+    toc: true
+    code-fold: true
+execute:
+  warning: false
+  message: false
+params:
+  counts: "../results/GSE197555_A549/featurecounts/counts.txt"
+  samplesheet: "../samplesheets/GSE197555_A549.csv"
+  h460_counts: "../results/GSE197555_H460_subset/featurecounts/counts.txt"
+  h460_samplesheet: "../samplesheets/GSE197555_H460_subset.csv"
+  outdir: "../results/GSE197555_A549/deseq2"
+---
+
+A549 lung adenocarcinoma cells (KRAS G12S) treated with the MEK inhibitor trametinib (100 nM, 24 h), compared with DMSO controls, three biological replicates each. Reads were aligned with HISAT2 and counted per gene with featureCounts (unstranded, Ensembl 116) by the pipeline in `pipeline/`.
+
+**The GEO treatment labels for the A549 samples are swapped.** The first section below shows the evidence; all later sections use the corrected labels.
+
+```{r setup}
+library(DESeq2)
+library(apeglm)
+library(org.Hs.eg.db)
+library(clusterProfiler)
+library(fgsea)
+library(msigdbr)
+library(pheatmap)
+library(ggrepel)
+library(tidyverse)
+
+dir.create(params$outdir, recursive = TRUE, showWarnings = FALSE)
+dir.create(file.path(params$outdir, "figures"), showWarnings = FALSE)
+theme_set(theme_bw(base_size = 12))
+set.seed(42)
+```
+
+## Sample labels: GEO vs data
+
+Trametinib blocks MEK, which shuts off ERK signalling, and classic ERK target genes drop within hours. Comparing samples as labelled in GEO, those genes are *higher* in the A549 samples labelled trametinib. The H460 samples from the same GEO series (first 2M read pairs per run, same pipeline) behave as expected. So the A549 labels are flipped, not the pipeline or the biology.
+
+```{r label_check}
+read_counts <- function(path) {
+  fc <- read.delim(path, comment.char = "#", check.names = FALSE)
+  m <- as.matrix(fc[, -(1:6)])
+  rownames(m) <- fc$Geneid
+  colnames(m) <- sub("\\.bam$", "", colnames(m))
+  m
+}
+erk_targets <- c("DUSP6", "SPRY4", "ETV4", "ETV5", "DUSP4", "SPRY2", "PHLDA1", "EGR1", "FOSL1", "CCND1")
+
+geo_log2_ratio <- function(counts_path, sheet_path, line) {
+  m <- read_counts(counts_path)
+  s <- read.csv(sheet_path)
+  cpm <- t(t(m) / colSums(m)) * 1e6
+  sym <- mapIds(org.Hs.eg.db, rownames(cpm), "SYMBOL", "ENSEMBL")
+  hit <- !is.na(sym) & sym %in% erk_targets
+  erk <- rowsum(cpm[hit, ], sym[hit])[erk_targets, ]
+  tram <- s$sample[s$geo_condition == "trametinib"]
+  dmso <- s$sample[s$geo_condition == "control"]
+  tibble(gene = erk_targets, line = line,
+         log2_ratio = log2((rowMeans(erk[, tram]) + 0.5) / (rowMeans(erk[, dmso]) + 0.5)))
+}
+label_check <- bind_rows(
+  geo_log2_ratio(params$counts, params$samplesheet, "A549"),
+  geo_log2_ratio(params$h460_counts, params$h460_samplesheet, "H460")
+)
+write_tsv(label_check, file.path(params$outdir, "label_check_erk_targets.tsv"))
+label_check |>
+  pivot_wider(names_from = line, values_from = log2_ratio) |>
+  knitr::kable(digits = 2, caption = "log2(GEO 'trametinib' / GEO 'DMSO'), CPM. Negative = lower with drug, as expected.")
+
+# The correction below is only justified while this pattern holds
+stopifnot(all(label_check$log2_ratio[label_check$line == "A549"] > 0),
+          all(label_check$log2_ratio[label_check$line == "H460"] < 0))
+```
+
+## Counts and samples
+
+```{r counts}
+counts <- read_counts(params$counts)
+# featureCounts output is ~100 MB (per-exon coordinates); keep a compact copy for git and later steps
+write_tsv(as_tibble(counts, rownames = "gene_id"), file.path(params$outdir, "counts_matrix.tsv.gz"))
+
+# condition holds the corrected label, geo_condition the one deposited in GEO
+meta <- read.csv(params$samplesheet) |>
+  mutate(condition = factor(condition, levels = c("control", "trametinib")),
+         label = paste0(condition, "_", gsm))
+counts <- counts[, meta$sample]
+stopifnot(identical(colnames(counts), meta$sample))
+colnames(counts) <- meta$label
+meta <- meta |> mutate(sample = label)
+meta |> select(gsm, run, geo_condition, condition)
+
+# Keep genes with at least 10 reads in at least 3 samples (the size of one group)
+keep <- rowSums(counts >= 10) >= 3
+tibble(genes_total = nrow(counts), genes_kept = sum(keep))
+```
+
+```{r libsizes}
+tibble(sample = colnames(counts), assigned_pairs_M = colSums(counts) / 1e6) |>
+  left_join(meta, by = "sample") |>
+  ggplot(aes(sample, assigned_pairs_M, fill = condition)) +
+  geom_col() +
+  coord_flip() +
+  labs(x = NULL, y = "Read pairs assigned to genes (millions)")
+```
+
+## Differential expression
+
+```{r deseq}
+dds <- DESeqDataSetFromMatrix(counts[keep, ], meta, design = ~ condition)
+dds <- DESeq(dds)
+coef <- "condition_trametinib_vs_control"
+res <- results(dds, name = coef, alpha = 0.05)
+shrunk <- lfcShrink(dds, coef = coef, type = "apeglm")
+
+tab <- as.data.frame(res) |>
+  rownames_to_column("gene_id") |>
+  mutate(
+    log2FC_shrunk = shrunk$log2FoldChange,
+    symbol = unname(mapIds(org.Hs.eg.db, gene_id, "SYMBOL", "ENSEMBL")),
+    entrez = unname(mapIds(org.Hs.eg.db, gene_id, "ENTREZID", "ENSEMBL"))
+  ) |>
+  arrange(padj)
+
+sig <- tab |> filter(padj < 0.05, abs(log2FC_shrunk) > 1)
+write_tsv(tab, file.path(params$outdir, "deseq2_results.tsv"))
+write_tsv(sig, file.path(params$outdir, "deseq2_significant.tsv"))
+
+sig |> count(direction = if_else(log2FC_shrunk > 0, "up", "down"))
+```
+
+Significant: adjusted p < 0.05 and |shrunken log2 fold change| > 1.
+
+```{r dispersion}
+plotDispEsts(dds)
+signif(dispersionFunction(dds)(c(100, 1000, 10000)), 2)
+```
+
+Replicate dispersion is very low (about 0.002 at 1,000 reads; biological replicates of a cell line are usually around 0.005-0.02), so these may be technical rather than independent biological replicates. P-values are therefore likely overconfident. Downstream steps lean on effect size (shrunken fold change), pathway-level consistency and validation in patient data rather than on p-value cut-offs alone.
+
+### Sample structure
+
+PCA on the 500 most variable genes (DESeq2 default), variance-stabilised counts.
+
+```{r pca}
+vsd <- vst(dds, blind = TRUE)
+pca <- plotPCA(vsd, intgroup = "condition", returnData = TRUE)
+var_pct <- round(100 * attr(pca, "percentVar"))
+p_pca <- ggplot(pca, aes(PC1, PC2, colour = condition, label = name)) +
+  geom_point(size = 3) +
+  geom_text_repel(size = 3, show.legend = FALSE) +
+  labs(x = paste0("PC1 (", var_pct[1], "%)"), y = paste0("PC2 (", var_pct[2], "%)"))
+ggsave(file.path(params$outdir, "figures", "pca.png"), p_pca, width = 6, height = 4.5, dpi = 150)
+p_pca
+```
+
+```{r distances}
+d <- as.matrix(dist(t(assay(vsd))))
+pheatmap(d, annotation_col = meta |> column_to_rownames("sample") |> select(condition),
+         clustering_distance_rows = "euclidean", clustering_distance_cols = "euclidean")
+```
+
+### MA and volcano
+
+```{r ma}
+plotMA(shrunk, ylim = c(-6, 6), alpha = 0.05)
+```
+
+```{r volcano}
+# Many genes have padj that underflows to 0, so cap the y axis and label by effect size x significance
+volcano_df <- tab |>
+  filter(!is.na(padj)) |>
+  mutate(neg_log10_padj = -log10(pmax(padj, 1e-300)),
+         group = case_when(padj < 0.05 & log2FC_shrunk > 1 ~ "up",
+                           padj < 0.05 & log2FC_shrunk < -1 ~ "down",
+                           TRUE ~ "ns"))
+labels <- volcano_df |> filter(!is.na(symbol), group != "ns") |>
+  slice_max(abs(log2FC_shrunk) * neg_log10_padj, n = 20)
+p_volcano <- volcano_df |>
+  ggplot(aes(log2FC_shrunk, neg_log10_padj, colour = group)) +
+  geom_point(size = 0.7, alpha = 0.6) +
+  geom_text_repel(data = labels, aes(label = symbol), colour = "black", size = 3, max.overlaps = 30) +
+  scale_colour_manual(values = c(up = "#c0392b", down = "#2471a3", ns = "grey70")) +
+  labs(x = "log2 fold change (trametinib vs control, shrunken)", y = "-log10 adjusted p (capped at 300)", colour = NULL)
+ggsave(file.path(params$outdir, "figures", "volcano.png"), p_volcano, width = 7, height = 5.5, dpi = 150)
+p_volcano
+```
+
+### Top 50 genes
+
+```{r heatmap, fig.height=9}
+top <- tab |> filter(!is.na(padj)) |> slice_min(padj, n = 50)
+m <- assay(vsd)[top$gene_id, ]
+rownames(m) <- coalesce(top$symbol, top$gene_id)
+pheatmap(m, scale = "row", annotation_col = meta |> column_to_rownames("sample") |> select(condition),
+         fontsize_row = 7)
+```
+
+## Sanity check: known MEK/ERK targets
+
+Trametinib blocks MEK, so classic ERK-driven transcripts should fall.
+
+```{r mek_targets}
+mek <- tab |> filter(symbol %in% c(erk_targets, "MYC")) |>
+  select(symbol, baseMean, log2FC_shrunk, padj) |>
+  arrange(log2FC_shrunk)
+mek
+# DUSP6 is the most robust ERK readout; if it is not down, something upstream is wrong
+stopifnot(mek$log2FC_shrunk[mek$symbol == "DUSP6"] < 0, mek$padj[mek$symbol == "DUSP6"] < 0.05)
+```
+
+## Pathway enrichment
+
+### GSEA on MSigDB Hallmark
+
+Genes ranked by the DESeq2 Wald statistic; one entry per gene symbol.
+
+```{r fgsea}
+ranks <- tab |>
+  filter(!is.na(symbol), !is.na(stat)) |>
+  group_by(symbol) |>
+  slice_max(abs(stat), n = 1, with_ties = FALSE) |>
+  ungroup() |>
+  arrange(desc(stat)) |>
+  (\(x) setNames(x$stat, x$symbol))()
+
+hallmark <- msigdbr(species = "Homo sapiens", collection = "H")
+hallmark <- split(hallmark$gene_symbol, hallmark$gs_name)
+
+gsea <- fgsea(hallmark, ranks, minSize = 15, maxSize = 500) |> arrange(padj)
+write_tsv(gsea |> mutate(leadingEdge = map_chr(leadingEdge, paste, collapse = ",")),
+          file.path(params$outdir, "fgsea_hallmark.tsv"))
+
+p_gsea <- gsea |>
+  filter(padj < 0.05) |>
+  mutate(pathway = fct_reorder(str_remove(pathway, "^HALLMARK_"), NES)) |>
+  ggplot(aes(NES, pathway, fill = NES > 0)) +
+  geom_col() +
+  scale_fill_manual(values = c(`TRUE` = "#c0392b", `FALSE` = "#2471a3"), guide = "none") +
+  labs(x = "Normalised enrichment score", y = NULL)
+ggsave(file.path(params$outdir, "figures", "gsea_hallmark.png"), p_gsea, width = 7, height = 6, dpi = 150)
+p_gsea
+```
+
+### GO biological process (over-representation)
+
+Up- and down-regulated significant genes tested separately against all genes that passed filtering.
+
+```{r go}
+go_for <- function(ids) {
+  enrichGO(ids, universe = tab$gene_id, OrgDb = org.Hs.eg.db, keyType = "ENSEMBL",
+           ont = "BP", readable = TRUE)
+}
+go_up <- go_for(sig$gene_id[sig$log2FC_shrunk > 0])
+go_down <- go_for(sig$gene_id[sig$log2FC_shrunk < 0])
+write_tsv(as.data.frame(go_up), file.path(params$outdir, "go_bp_up.tsv"))
+write_tsv(as.data.frame(go_down), file.path(params$outdir, "go_bp_down.tsv"))
+dotplot(go_up, showCategory = 15) + ggtitle("Up in trametinib")
+dotplot(go_down, showCategory = 15) + ggtitle("Down in trametinib")
+```
+
+### KEGG (over-representation)
+
+```{r kegg}
+# KEGG is queried online; a service outage should not sink the whole report
+kegg <- tryCatch(
+  enrichKEGG(na.omit(sig$entrez), universe = na.omit(tab$entrez), organism = "hsa"),
+  error = function(e) { message("KEGG unavailable: ", conditionMessage(e)); NULL }
+)
+if (!is.null(kegg)) {
+  write_tsv(as.data.frame(kegg), file.path(params$outdir, "kegg.tsv"))
+  dotplot(kegg, showCategory = 15)
+}
+```
+
+## Session info
+
+```{r session}
+sessionInfo()
+```
