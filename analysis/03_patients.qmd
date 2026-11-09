@@ -1,0 +1,278 @@
+---
+title: "DREAM: does the trametinib signature matter in patients?"
+subtitle: "GSE197555 A549 signature scored in TCGA lung adenocarcinoma"
+format:
+  html:
+    embed-resources: true
+    toc: true
+    code-fold: true
+execute:
+  warning: false
+  message: false
+params:
+  deseq2: "../results/GSE197555_A549/deseq2/deseq2_results.tsv"
+  tpm: "../data/tcga/TCGA-LUAD.star_tpm.tsv.gz"
+  survival: "../data/tcga/TCGA-LUAD.survival.tsv.gz"
+  clinical: "../data/tcga/TCGA-LUAD.clinical.tsv.gz"
+  mutations: "../data/tcga/TCGA-LUAD.somaticmutation_wxs.tsv.gz"
+  progeny: "resources/progeny_human_top500.tsv"
+  n_random: 1000
+  outdir: "../results/GSE197555_A549/tcga_luad"
+---
+
+The genes trametinib switches off in A549 cells are the ones that need active MEK/ERK signalling. Scoring those genes in patient tumours gives a per-tumour readout of MEK pathway activity. This report checks whether that readout behaves like MAPK activity in patients (it should be higher in KRAS-mutant tumours and track an independent MAPK footprint) and whether it is linked to survival.
+
+TCGA-LUAD data (GDC STAR TPM, survival, clinical and WXS mutations) come from the UCSC Xena GDC hub, downloaded 2026-11-09.
+
+```{r setup}
+library(GSVA)
+library(BiocParallel)
+library(decoupleR)
+library(org.Hs.eg.db)
+library(survival)
+library(survminer)
+library(tidyverse)
+
+dir.create(file.path(params$outdir, "figures"), recursive = TRUE, showWarnings = FALSE)
+theme_set(theme_bw(base_size = 12))
+set.seed(42)
+```
+
+## TCGA tumours
+
+```{r tcga}
+tpm <- read_tsv(params$tpm, show_col_types = FALSE)
+tpm <- tpm[!grepl("_PAR_Y$", tpm$Ensembl_ID), ]
+expr <- as.matrix(tpm[, -1])
+rownames(expr) <- sub("\\..*$", "", tpm$Ensembl_ID)
+rm(tpm)
+
+# Primary tumours only (sample type 01), one per patient
+tumour <- colnames(expr)[substr(colnames(expr), 14, 15) == "01"]
+tumour <- tumour[!duplicated(substr(tumour, 1, 12))]
+expr <- expr[, sort(tumour)]
+# Values are log2(TPM + 1); keep genes above 1 TPM on average
+expr <- expr[rowMeans(expr) > 1, ]
+tibble(tumours = ncol(expr), expressed_genes = nrow(expr))
+```
+
+## Signature
+
+Defined from the A549 results before any patient data were looked at, and not tuned afterwards: significant genes (adjusted p < 0.05, |shrunken log2FC| ≥ 1) with mean expression ≥ 100 normalised reads that are also expressed in TCGA tumours; the 100 most decreased and 100 most increased by trametinib.
+
+The **MEK activity score** for a tumour is the ssGSEA score of the trametinib-decreased set minus that of the trametinib-increased set. High means the tumour looks like untreated, MEK-active A549 cells.
+
+```{r signature}
+de <- read_tsv(params$deseq2, show_col_types = FALSE)
+cand <- de |> filter(padj < 0.05, baseMean >= 100, abs(log2FC_shrunk) >= 1, gene_id %in% rownames(expr))
+sig_down <- cand |> slice_min(log2FC_shrunk, n = 100)
+sig_up <- cand |> slice_max(log2FC_shrunk, n = 100)
+write_tsv(bind_rows(sig_down |> mutate(set = "decreased_by_trametinib"),
+                    sig_up |> mutate(set = "increased_by_trametinib")) |>
+            select(set, gene_id, symbol, log2FC_shrunk, padj),
+          file.path(params$outdir, "signature_genes.tsv"))
+
+score_sets <- function(sets) {
+  gsva(ssgseaParam(expr, sets), verbose = FALSE, BPPARAM = MulticoreParam(8))
+}
+es <- score_sets(list(down = sig_down$gene_id, up = sig_up$gene_id))
+mas <- es["down", ] - es["up", ]
+
+tibble(set = c("decreased", "increased"), genes = c(nrow(sig_down), nrow(sig_up)),
+       examples = c(paste(head(na.omit(sig_down$symbol), 8), collapse = ", "),
+                    paste(head(na.omit(sig_up$symbol), 8), collapse = ", ")))
+```
+
+## Does the score measure MAPK activity in patients?
+
+### Independent MAPK footprint
+
+PROGENy's MAPK footprint was built from many perturbation experiments, not from this dataset, so agreement is an independent check.
+
+```{r progeny_tcga}
+progeny <- read_tsv(params$progeny, show_col_types = FALSE)
+sym <- mapIds(org.Hs.eg.db, rownames(expr), "SYMBOL", "ENSEMBL")
+keep <- !is.na(sym) & !duplicated(sym)
+expr_sym <- expr[keep, ]
+rownames(expr_sym) <- sym[keep]
+pw <- run_mlm(expr_sym, progeny, .source = "source", .target = "target", .mor = "weight", minsize = 5)
+mapk <- pw |> filter(source == "MAPK") |> select(sample = condition, progeny_mapk = score)
+
+scores <- tibble(sample = names(mas), mek_activity = as.numeric(scale(mas))) |> left_join(mapk, by = "sample")
+rho <- cor.test(scores$mek_activity, scores$progeny_mapk, method = "spearman")
+ggplot(scores, aes(progeny_mapk, mek_activity)) +
+  geom_point(alpha = 0.4) +
+  geom_smooth(method = "lm", colour = "#c0392b") +
+  labs(x = "PROGENy MAPK activity", y = "MEK activity score (z)",
+       title = sprintf("Spearman rho = %.2f, p = %.1e", rho$estimate, rho$p.value))
+
+# The score is only meaningful if it tracks MAPK activity in patients
+stopifnot(rho$estimate > 0, rho$p.value < 0.05)
+```
+
+### Driver mutations
+
+KRAS, BRAF and EGFR mutations all switch on MAPK signalling in lung adenocarcinoma.
+
+```{r mutations}
+mut <- read_tsv(params$mutations, show_col_types = FALSE)
+coding <- "missense|stop_gained|frameshift|inframe|splice_acceptor|splice_donor|start_lost|stop_lost"
+patients_wxs <- unique(substr(mut$sample, 1, 12))
+driver <- mut |>
+  filter(gene %in% c("KRAS", "BRAF", "EGFR"), grepl(coding, effect)) |>
+  distinct(patient = substr(sample, 1, 12), gene)
+
+scores <- scores |>
+  mutate(patient = substr(sample, 1, 12)) |>
+  left_join(driver |> group_by(patient) |> summarise(drivers = paste(sort(gene), collapse = "+")), by = "patient") |>
+  mutate(driver_group = case_when(!patient %in% patients_wxs ~ NA_character_,
+                                  is.na(drivers) ~ "none of the three",
+                                  grepl("\\+", drivers) ~ "multiple",
+                                  TRUE ~ paste(drivers, "mutant")))
+
+p_mut <- scores |>
+  filter(!is.na(driver_group), driver_group != "multiple") |>
+  mutate(driver_group = fct_relevel(driver_group, "none of the three")) |>
+  ggplot(aes(driver_group, mek_activity, fill = driver_group)) +
+  geom_boxplot(outlier.shape = NA, show.legend = FALSE) +
+  geom_jitter(width = 0.15, size = 0.6, alpha = 0.4) +
+  labs(x = NULL, y = "MEK activity score (z)")
+ggsave(file.path(params$outdir, "figures", "mek_activity_by_driver.png"), p_mut, width = 6, height = 4.5, dpi = 150)
+p_mut
+
+scores |> filter(!is.na(driver_group)) |> count(driver_group)
+kras_test <- with(scores |> filter(driver_group %in% c("KRAS mutant", "none of the three")),
+                  wilcox.test(mek_activity ~ driver_group))
+kras_test
+```
+
+### Published comparator: MPAS
+
+The broad 200-gene signature mixes true ERK targets with immune/interferon genes (decreased set) and stromal collagen genes (increased set), which in bulk tumours mostly measure immune and fibroblast content. As a pre-specified external comparator, the MAPK Pathway Activity Score (MPAS; Wagle et al., npj Precision Oncology 2018) uses 10 canonical ERK target genes, all strongly decreased by trametinib in the A549 data. Score = mean z-scored expression across the 10 genes.
+
+```{r mpas}
+mpas_genes <- c("PHLDA1", "SPRY2", "SPRY4", "DUSP4", "DUSP6", "CCND1", "EPHA2", "EPHA4", "ETV4", "ETV5")
+stopifnot(all(mpas_genes %in% rownames(expr_sym)))
+mpas <- colMeans(t(scale(t(expr_sym[mpas_genes, ]))))
+scores <- scores |> mutate(mpas = as.numeric(scale(mpas[sample])))
+
+de |> filter(symbol %in% mpas_genes) |> select(symbol, log2FC_shrunk, padj) |> arrange(log2FC_shrunk) |>
+  knitr::kable(digits = 2, caption = "MPAS genes in the A549 trametinib data")
+
+cor.test(scores$mpas, scores$progeny_mapk, method = "spearman")
+
+p_mpas <- scores |>
+  filter(!is.na(driver_group), driver_group != "multiple") |>
+  mutate(driver_group = fct_relevel(driver_group, "none of the three")) |>
+  ggplot(aes(driver_group, mpas, fill = driver_group)) +
+  geom_boxplot(outlier.shape = NA, show.legend = FALSE) +
+  geom_jitter(width = 0.15, size = 0.6, alpha = 0.4) +
+  labs(x = NULL, y = "MPAS (z)")
+ggsave(file.path(params$outdir, "figures", "mpas_by_driver.png"), p_mpas, width = 6, height = 4.5, dpi = 150)
+p_mpas
+
+with(scores |> filter(driver_group %in% c("KRAS mutant", "none of the three")), wilcox.test(mpas ~ driver_group))
+with(scores |> filter(driver_group %in% c("BRAF mutant", "none of the three")), wilcox.test(mpas ~ driver_group))
+```
+
+## Survival
+
+Overall survival, one primary tumour per patient. Stage grouped as I, II and III/IV.
+
+```{r survival_data}
+surv <- read_tsv(params$survival, show_col_types = FALSE)
+clin <- read_tsv(params$clinical, show_col_types = FALSE) |>
+  transmute(sample,
+            age = age_at_index.demographic,
+            stage = str_extract(ajcc_pathologic_stage.diagnoses, "IV|III|II|I"),
+            stage_group = factor(if_else(stage %in% c("III", "IV"), "III/IV", stage), levels = c("I", "II", "III/IV")))
+
+d <- scores |>
+  inner_join(surv |> select(sample, OS.time, OS), by = "sample") |>
+  left_join(clin, by = "sample") |>
+  filter(!is.na(OS.time), OS.time > 0) |>
+  mutate(OS_years = OS.time / 365.25,
+         group = factor(if_else(mek_activity > median(mek_activity), "high", "low"), levels = c("low", "high")))
+tibble(patients = nrow(d), deaths = sum(d$OS), with_age_and_stage = sum(complete.cases(d$age, d$stage_group)))
+write_tsv(d |> select(sample, mek_activity, mpas, progeny_mapk, driver_group, age, stage_group, OS_years, OS),
+          file.path(params$outdir, "tcga_luad_scores.tsv"))
+```
+
+```{r km, fig.height=6}
+fit <- survfit(Surv(OS_years, OS) ~ group, data = d)
+km <- ggsurvplot(fit, data = d, pval = TRUE, risk.table = TRUE, palette = c("#2471a3", "#c0392b"),
+                 legend.title = "MEK activity", legend.labs = c("low", "high"), xlab = "Years")
+ggsave(file.path(params$outdir, "figures", "km_overall_survival.png"),
+       survminer:::.build_ggsurvplot(km), width = 7, height = 6, dpi = 150)
+km
+```
+
+```{r cox}
+cox_rows <- function(fit, model) {
+  tibble(model = model, term = names(coef(fit)), HR = exp(coef(fit)),
+         lower = exp(confint(fit))[, 1], upper = exp(confint(fit))[, 2],
+         p = summary(fit)$coefficients[, "Pr(>|z|)"])
+}
+cox_tab <- bind_rows(
+  cox_rows(coxph(Surv(OS_years, OS) ~ mek_activity, data = d), "MEK activity, unadjusted"),
+  cox_rows(coxph(Surv(OS_years, OS) ~ mek_activity + age + stage_group, data = d), "MEK activity, adjusted (age, stage)"),
+  cox_rows(coxph(Surv(OS_years, OS) ~ mpas, data = d), "MPAS, unadjusted"),
+  cox_rows(coxph(Surv(OS_years, OS) ~ mpas + age + stage_group, data = d), "MPAS, adjusted (age, stage)")
+)
+write_tsv(cox_tab, file.path(params$outdir, "cox_models.tsv"))
+knitr::kable(cox_tab, digits = 3, caption = "Hazard ratio per 1 SD of MEK activity score")
+```
+
+### Negative control: random gene sets
+
+A survival link can arise just from scoring any 200 genes (for example through proliferation or tumour purity). The same score, Cox model and test were repeated for `r params$n_random` random pairs of 100-gene sets drawn from all expressed genes.
+
+```{r random_control}
+cox_z <- function(score) {
+  s <- as.numeric(scale(score[d$sample]))
+  summary(coxph(Surv(d$OS_years, d$OS) ~ s))$coefficients[, "z"]
+}
+obs_z <- cox_z(mas)
+pool <- rownames(expr)
+rand_sets <- list()
+for (i in seq_len(params$n_random)) {
+  g <- sample(pool, 200)
+  rand_sets[[paste0("d", i)]] <- g[1:100]
+  rand_sets[[paste0("u", i)]] <- g[101:200]
+}
+rand_es <- score_sets(rand_sets)
+rand_z <- vapply(seq_len(params$n_random),
+                 \(i) cox_z(rand_es[paste0("d", i), ] - rand_es[paste0("u", i), ]), numeric(1))
+empirical_p <- mean(abs(rand_z) >= abs(obs_z))
+write_tsv(tibble(observed_z = obs_z, n_random = params$n_random, empirical_p = empirical_p),
+          file.path(params$outdir, "random_set_control.tsv"))
+
+ggplot(tibble(z = rand_z), aes(z)) +
+  geom_histogram(bins = 40, fill = "grey70") +
+  geom_vline(xintercept = obs_z, colour = "#c0392b", linewidth = 1) +
+  labs(x = "Cox z (random signatures)", y = "Count",
+       title = sprintf("Observed z = %.2f; empirical p = %.3f", obs_z, empirical_p))
+```
+
+### Stage
+
+```{r stage}
+d |> filter(!is.na(stage_group)) |>
+  ggplot(aes(stage_group, mek_activity, fill = stage_group)) +
+  geom_boxplot(outlier.shape = NA, show.legend = FALSE) +
+  geom_jitter(width = 0.15, size = 0.6, alpha = 0.4) +
+  labs(x = "Stage", y = "MEK activity score (z)")
+kruskal.test(mek_activity ~ stage_group, data = d)
+```
+
+## Summary
+
+- The core ERK program that trametinib shuts off in A549 cells (the 10 MPAS genes, all strongly decreased here) is clearly visible in patients: MPAS is higher in KRAS-mutant and EGFR-mutant tumours than in tumours without KRAS, BRAF or EGFR mutations. Most BRAF mutations in lung adenocarcinoma are non-V600 and signal weakly, which fits their lack of difference.
+- The broad 200-gene signature tracks MAPK activity only weakly and does not separate driver groups, because many of its genes report immune and stromal content in bulk tumours rather than tumour-cell signalling.
+- Neither score is linked to overall survival, with or without adjustment for age and stage, and the broad signature does no better than random gene sets. MAPK pathway output in lung adenocarcinoma marks the driver, not the prognosis.
+
+## Session info
+
+```{r session}
+sessionInfo()
+```
