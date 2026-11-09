@@ -15,6 +15,7 @@ use std::time::{Duration, Instant, SystemTime};
 use theme::*;
 
 const CONTENT_WIDTH: f32 = 880.0;
+const ICON: &[u8] = include_bytes!("../assets/icon-256.png");
 const SECTION_GAP: f32 = 22.0;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -412,12 +413,7 @@ impl App {
                         );
                     }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        let label = format!("Theme: {}", theme::preference_name(self.theme));
-                        if ui.link(RichText::new(label).size(13.0)).on_hover_text("Auto follows the system setting").clicked() {
-                            self.theme = theme::next(self.theme);
-                            ui.ctx().set_theme(self.theme);
-                            project::save_setting("theme", &format!("{:?}", self.theme).to_lowercase());
-                        }
+                        self.theme_menu(ui);
                         ui.add_space(20.0);
                         self.memory_meter(ui);
                         ui.add_space(20.0);
@@ -428,6 +424,66 @@ impl App {
             .response;
         let r = response.rect;
         ui.painter().hline(r.x_range(), r.bottom(), Stroke::new(1.0, p.hairline));
+    }
+
+    /// Dropdown with the current theme's icon and name; the menu lists Auto, Light and Dark.
+    fn theme_menu(&mut self, ui: &mut Ui) {
+        let p = pal(ui.visuals());
+        let name = theme::preference_name(self.theme);
+        let text_w = ui.painter().layout_no_wrap(name.into(), egui::FontId::proportional(13.0), p.ink).size().x;
+        let (rect, response) = ui.allocate_exact_size(vec2(26.0 + text_w + 24.0, 28.0), Sense::click());
+        let response = response.on_hover_text("Theme");
+        let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&response));
+        let v = ui.style().interact_selectable(&response, open);
+        let painter = ui.painter();
+        painter.rect(rect, CornerRadius::same(RADIUS), v.weak_bg_fill, v.bg_stroke, egui::StrokeKind::Inside);
+        let c = egui::pos2(rect.left() + 15.0, rect.center().y);
+        theme::icon(painter, c, self.theme, p.ink, v.weak_bg_fill);
+        painter.text(egui::pos2(rect.left() + 28.0, rect.center().y), Align2::LEFT_CENTER, name, egui::FontId::proportional(13.0), p.ink);
+        let ch = egui::pos2(rect.right() - 12.0, rect.center().y);
+        let s = Stroke::new(1.4, p.muted);
+        painter.line_segment([ch + vec2(-3.5, -1.5), ch + vec2(0.0, 2.0)], s);
+        painter.line_segment([ch + vec2(0.0, 2.0), ch + vec2(3.5, -1.5)], s);
+
+        let popup = egui::Popup::menu(&response).align(egui::RectAlign::BOTTOM_END).gap(6.0).width(190.0);
+        // dev screenshots of the open menu
+        #[cfg(feature = "screenshot")]
+        let popup = match std::env::var("DREAM_GUI_THEME_MENU") {
+            Ok(_) => popup.open_memory(egui::SetOpenCommand::Bool(true)),
+            Err(_) => popup,
+        };
+        popup.show(|ui| {
+            for (pref, label, hint) in [
+                (egui::ThemePreference::System, "Auto", "follows system"),
+                (egui::ThemePreference::Light, "Light", ""),
+                (egui::ThemePreference::Dark, "Dark", ""),
+            ] {
+                let (row, r) = ui.allocate_exact_size(vec2(ui.available_width(), 30.0), Sense::click());
+                let selected = self.theme == pref;
+                let painter = ui.painter();
+                let bg = if r.hovered() { p.hover } else { p.pane };
+                painter.rect_filled(row, CornerRadius::same(4), bg);
+                theme::icon(painter, egui::pos2(row.left() + 16.0, row.center().y), pref, p.ink, bg);
+                let galley = painter.layout_no_wrap(label.into(), egui::FontId::proportional(14.0), p.ink);
+                let text_pos = egui::pos2(row.left() + 32.0, row.center().y - galley.size().y / 2.0);
+                let hint_x = text_pos.x + galley.size().x + 8.0;
+                painter.galley(text_pos, galley, p.ink);
+                if !hint.is_empty() {
+                    painter.text(egui::pos2(hint_x, row.center().y), Align2::LEFT_CENTER, hint, egui::FontId::proportional(12.5), p.muted);
+                }
+                if selected {
+                    let k = egui::pos2(row.right() - 16.0, row.center().y);
+                    let s = Stroke::new(1.8, p.accent);
+                    painter.line_segment([k + vec2(-4.5, 0.5), k + vec2(-1.5, 3.5)], s);
+                    painter.line_segment([k + vec2(-1.5, 3.5), k + vec2(4.5, -3.5)], s);
+                }
+                if r.clicked() && !selected {
+                    self.theme = pref;
+                    ui.ctx().set_theme(pref);
+                    project::save_setting("theme", &label.to_lowercase());
+                }
+            }
+        });
     }
 
     fn memory_meter(&self, ui: &mut Ui) {
@@ -837,8 +893,18 @@ fn main() -> eframe::Result {
             .with_title("DREAM")
             .with_app_id("dream-gui")
             .with_inner_size([1280.0, 800.0])
-            .with_min_inner_size([960.0, 640.0]),
+            .with_min_inner_size([960.0, 640.0])
+            .with_icon(eframe::icon_data::from_png_bytes(ICON).expect("bundled icon is a valid PNG")),
         ..Default::default()
     };
     eframe::run_native("DREAM", options, Box::new(|cc| Ok(Box::new(App::new(cc)))))
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn bundled_icon_decodes() {
+        let icon = eframe::icon_data::from_png_bytes(super::ICON).unwrap();
+        assert_eq!((icon.width, icon.height), (256, 256));
+    }
 }

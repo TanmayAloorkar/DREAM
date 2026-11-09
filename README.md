@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/logo/dream-icon-dark.png">
+  <img src="docs/logo/dream-icon-light.png" alt="DREAM logo" width="96">
+</picture>
+
 # DREAM
 
 **Drug Repurposing via Expression Analysis & Mapping**: an end-to-end RNA-seq project that starts from raw reads in GEO and ends with patient validation and a drug-repurposing query.

@@ -2,8 +2,8 @@
 //! (blue #2471a3, red #c0392b); the dark palette lightens them to keep contrast.
 
 use eframe::egui::{
-    self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Shadow, Stroke, TextStyle,
-    Theme, ThemePreference, Visuals, vec2,
+    self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Painter, Pos2, Shadow, Shape, Stroke,
+    TextStyle, Theme, ThemePreference, Visuals, pos2, vec2,
 };
 use std::sync::Arc;
 
@@ -80,11 +80,45 @@ pub fn preference_name(p: ThemePreference) -> &'static str {
     }
 }
 
-pub fn next(p: ThemePreference) -> ThemePreference {
-    match p {
-        ThemePreference::System => ThemePreference::Light,
-        ThemePreference::Light => ThemePreference::Dark,
-        ThemePreference::Dark => ThemePreference::System,
+/// Points along a circle from angle `from` to `to` (degrees, 0 = right, 90 = down).
+fn arc(c: Pos2, r: f32, from: f32, to: f32) -> Vec<Pos2> {
+    (0..=18)
+        .map(|i| from + (to - from) * i as f32 / 18.0)
+        .map(|deg| {
+            let a = deg.to_radians();
+            pos2(c.x + r * a.cos(), c.y + r * a.sin())
+        })
+        .collect()
+}
+
+fn rays(painter: &Painter, c: Pos2, angles: impl Iterator<Item = f32>, color: Color32) {
+    for deg in angles {
+        let a = deg.to_radians();
+        let d = vec2(a.cos(), a.sin());
+        painter.line_segment([c + d * 5.6, c + d * 7.6], Stroke::new(1.5, color));
+    }
+}
+
+/// Theme icons, drawn rather than taken from a font: sun for Light, full moon for Dark,
+/// and for Auto a sun's left half joined to a moon's right half. `cutout` is the
+/// background colour, used for the moon's craters.
+pub fn icon(painter: &Painter, c: Pos2, preference: ThemePreference, color: Color32, cutout: Color32) {
+    match preference {
+        ThemePreference::Light => {
+            painter.circle_filled(c, 3.6, color);
+            rays(painter, c, (0..8).map(|k| k as f32 * 45.0), color);
+        }
+        ThemePreference::Dark => {
+            painter.circle_filled(c, 6.5, color);
+            painter.circle_filled(c + vec2(-2.0, -1.6), 1.3, cutout);
+            painter.circle_filled(c + vec2(2.2, 1.9), 0.9, cutout);
+        }
+        ThemePreference::System => {
+            painter.add(Shape::convex_polygon(arc(c, 6.5, -90.0, 90.0), color, Stroke::NONE));
+            painter.circle_filled(c + vec2(2.6, 1.8), 0.9, cutout);
+            painter.add(Shape::convex_polygon(arc(c, 3.6, 90.0, 270.0), color, Stroke::NONE));
+            rays(painter, c, [112.5, 157.5, 202.5, 247.5].into_iter(), color);
+        }
     }
 }
 
