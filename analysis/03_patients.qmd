@@ -11,12 +11,13 @@ execute:
   message: false
 params:
   deseq2: "../results/GSE197555_A549/deseq2/deseq2_results.tsv"
-  tpm: "../data/tcga/TCGA-LUAD.star_tpm.tsv.gz"
-  survival: "../data/tcga/TCGA-LUAD.survival.tsv.gz"
-  clinical: "../data/tcga/TCGA-LUAD.clinical.tsv.gz"
-  mutations: "../data/tcga/TCGA-LUAD.somaticmutation_wxs.tsv.gz"
+  tcga_dir: "../data/tcga"
+  tcga_project: "TCGA-LUAD"   # any UCSC Xena GDC hub project fetched by scripts/get_inputs.sh
+  driver_genes: ["KRAS", "BRAF", "EGFR"]
   progeny: "resources/progeny_human_top500.tsv"
+  gate_pathway: "MAPK"        # render stops unless the score tracks this PROGENy pathway; none to skip
   n_random: 1000
+  workers: 8
   outdir: "../results/GSE197555_A549/tcga_luad"
 ---
 
@@ -33,6 +34,7 @@ library(survival)
 library(survminer)
 library(tidyverse)
 
+tcga_file <- function(type) file.path(params$tcga_dir, paste0(params$tcga_project, ".", type, ".tsv.gz"))
 dir.create(file.path(params$outdir, "figures"), recursive = TRUE, showWarnings = FALSE)
 theme_set(theme_bw(base_size = 12))
 set.seed(42)
@@ -41,7 +43,7 @@ set.seed(42)
 ## TCGA tumours
 
 ```{r tcga}
-tpm <- read_tsv(params$tpm, show_col_types = FALSE)
+tpm <- read_tsv(tcga_file("star_tpm"), show_col_types = FALSE)
 tpm <- tpm[!grepl("_PAR_Y$", tpm$Ensembl_ID), ]
 expr <- as.matrix(tpm[, -1])
 rownames(expr) <- sub("\\..*$", "", tpm$Ensembl_ID)
@@ -73,7 +75,7 @@ write_tsv(bind_rows(sig_down |> mutate(set = "decreased_by_trametinib"),
           file.path(params$outdir, "signature_genes.tsv"))
 
 score_sets <- function(sets) {
-  gsva(ssgseaParam(expr, sets), verbose = FALSE, BPPARAM = MulticoreParam(8))
+  gsva(ssgseaParam(expr, sets), verbose = FALSE, BPPARAM = MulticoreParam(params$workers))
 }
 es <- score_sets(list(down = sig_down$gene_id, up = sig_up$gene_id))
 mas <- es["down", ] - es["up", ]
@@ -96,7 +98,8 @@ keep <- !is.na(sym) & !duplicated(sym)
 expr_sym <- expr[keep, ]
 rownames(expr_sym) <- sym[keep]
 pw <- run_mlm(expr_sym, progeny, .source = "source", .target = "target", .mor = "weight", minsize = 5)
-mapk <- pw |> filter(source == "MAPK") |> select(sample = condition, progeny_mapk = score)
+mapk <- pw |> filter(source == if (params$gate_pathway == "none") "MAPK" else params$gate_pathway) |>
+  select(sample = condition, progeny_mapk = score)
 
 scores <- tibble(sample = names(mas), mek_activity = as.numeric(scale(mas))) |> left_join(mapk, by = "sample")
 rho <- cor.test(scores$mek_activity, scores$progeny_mapk, method = "spearman")
@@ -107,7 +110,7 @@ ggplot(scores, aes(progeny_mapk, mek_activity)) +
        title = sprintf("Spearman rho = %.2f, p = %.1e", rho$estimate, rho$p.value))
 
 # The score is only meaningful if it tracks MAPK activity in patients
-stopifnot(rho$estimate > 0, rho$p.value < 0.05)
+if (params$gate_pathway != "none") stopifnot(rho$estimate > 0, rho$p.value < 0.05)
 ```
 
 ### Driver mutations
@@ -115,24 +118,24 @@ stopifnot(rho$estimate > 0, rho$p.value < 0.05)
 KRAS, BRAF and EGFR mutations all switch on MAPK signalling in lung adenocarcinoma.
 
 ```{r mutations}
-mut <- read_tsv(params$mutations, show_col_types = FALSE)
+mut <- read_tsv(tcga_file("somaticmutation_wxs"), show_col_types = FALSE)
 coding <- "missense|stop_gained|frameshift|inframe|splice_acceptor|splice_donor|start_lost|stop_lost"
 patients_wxs <- unique(substr(mut$sample, 1, 12))
 driver <- mut |>
-  filter(gene %in% c("KRAS", "BRAF", "EGFR"), grepl(coding, effect)) |>
+  filter(gene %in% params$driver_genes, grepl(coding, effect)) |>
   distinct(patient = substr(sample, 1, 12), gene)
 
 scores <- scores |>
   mutate(patient = substr(sample, 1, 12)) |>
   left_join(driver |> group_by(patient) |> summarise(drivers = paste(sort(gene), collapse = "+")), by = "patient") |>
   mutate(driver_group = case_when(!patient %in% patients_wxs ~ NA_character_,
-                                  is.na(drivers) ~ "none of the three",
+                                  is.na(drivers) ~ "none of these",
                                   grepl("\\+", drivers) ~ "multiple",
                                   TRUE ~ paste(drivers, "mutant")))
 
 p_mut <- scores |>
   filter(!is.na(driver_group), driver_group != "multiple") |>
-  mutate(driver_group = fct_relevel(driver_group, "none of the three")) |>
+  mutate(driver_group = fct_relevel(driver_group, "none of these")) |>
   ggplot(aes(driver_group, mek_activity, fill = driver_group)) +
   geom_boxplot(outlier.shape = NA, show.legend = FALSE) +
   geom_jitter(width = 0.15, size = 0.6, alpha = 0.4) +
@@ -141,9 +144,6 @@ ggsave(file.path(params$outdir, "figures", "mek_activity_by_driver.png"), p_mut,
 p_mut
 
 scores |> filter(!is.na(driver_group)) |> count(driver_group)
-kras_test <- with(scores |> filter(driver_group %in% c("KRAS mutant", "none of the three")),
-                  wilcox.test(mek_activity ~ driver_group))
-kras_test
 ```
 
 ### Published comparator: MPAS
@@ -163,7 +163,7 @@ cor.test(scores$mpas, scores$progeny_mapk, method = "spearman")
 
 p_mpas <- scores |>
   filter(!is.na(driver_group), driver_group != "multiple") |>
-  mutate(driver_group = fct_relevel(driver_group, "none of the three")) |>
+  mutate(driver_group = fct_relevel(driver_group, "none of these")) |>
   ggplot(aes(driver_group, mpas, fill = driver_group)) +
   geom_boxplot(outlier.shape = NA, show.legend = FALSE) +
   geom_jitter(width = 0.15, size = 0.6, alpha = 0.4) +
@@ -171,8 +171,17 @@ p_mpas <- scores |>
 ggsave(file.path(params$outdir, "figures", "mpas_by_driver.png"), p_mpas, width = 6, height = 4.5, dpi = 150)
 p_mpas
 
-with(scores |> filter(driver_group %in% c("KRAS mutant", "none of the three")), wilcox.test(mpas ~ driver_group))
-with(scores |> filter(driver_group %in% c("BRAF mutant", "none of the three")), wilcox.test(mpas ~ driver_group))
+# Each driver group against tumours with none of the listed drivers (Wilcoxon), for both scores
+driver_tests <- map_dfr(params$driver_genes, \(g) {
+  x <- scores |> filter(driver_group %in% c(paste(g, "mutant"), "none of these"))
+  n <- sum(x$driver_group != "none of these")
+  if (n < 3) return(tibble(driver = g, mutant_tumours = n))
+  tibble(driver = g, mutant_tumours = n,
+         mek_activity_p = wilcox.test(mek_activity ~ driver_group, x)$p.value,
+         mpas_p = wilcox.test(mpas ~ driver_group, x)$p.value)
+})
+write_tsv(driver_tests, file.path(params$outdir, "driver_tests.tsv"))
+knitr::kable(driver_tests, digits = 4, caption = "Mutant vs none of the listed drivers")
 ```
 
 ## Survival
@@ -180,8 +189,8 @@ with(scores |> filter(driver_group %in% c("BRAF mutant", "none of the three")), 
 Overall survival, one primary tumour per patient. Stage grouped as I, II and III/IV.
 
 ```{r survival_data}
-surv <- read_tsv(params$survival, show_col_types = FALSE)
-clin <- read_tsv(params$clinical, show_col_types = FALSE) |>
+surv <- read_tsv(tcga_file("survival"), show_col_types = FALSE)
+clin <- read_tsv(tcga_file("clinical"), show_col_types = FALSE) |>
   transmute(sample,
             age = age_at_index.demographic,
             stage = str_extract(ajcc_pathologic_stage.diagnoses, "IV|III|II|I"),
@@ -195,7 +204,7 @@ d <- scores |>
          group = factor(if_else(mek_activity > median(mek_activity), "high", "low"), levels = c("low", "high")))
 tibble(patients = nrow(d), deaths = sum(d$OS), with_age_and_stage = sum(complete.cases(d$age, d$stage_group)))
 write_tsv(d |> select(sample, mek_activity, mpas, progeny_mapk, driver_group, age, stage_group, OS_years, OS),
-          file.path(params$outdir, "tcga_luad_scores.tsv"))
+          file.path(params$outdir, paste0(tolower(sub("-", "_", params$tcga_project)), "_scores.tsv")))
 ```
 
 ```{r km, fig.height=6}
@@ -267,8 +276,8 @@ kruskal.test(mek_activity ~ stage_group, data = d)
 
 ## Summary
 
-- The core ERK program that trametinib shuts off in A549 cells (the 10 MPAS genes, all strongly decreased here) is clearly visible in patients: MPAS is higher in KRAS-mutant and EGFR-mutant tumours than in tumours without KRAS, BRAF or EGFR mutations. Most BRAF mutations in lung adenocarcinoma are non-V600 and signal weakly, which fits their lack of difference.
-- The broad 200-gene signature tracks MAPK activity only weakly and does not separate driver groups, because many of its genes report immune and stromal content in bulk tumours rather than tumour-cell signalling.
+- The core ERK program that trametinib shuts off in A549 cells (the 10 MPAS genes, all strongly decreased here) is clearly visible in patients: MPAS is higher in KRAS-mutant (p ≈ 1e-15) and EGFR-mutant (p ≈ 1e-5) tumours than in tumours without KRAS, BRAF or EGFR mutations. Most BRAF mutations in lung adenocarcinoma are non-V600 and signal weakly, which fits their lack of difference.
+- The broad 200-gene signature tracks MAPK activity only weakly, does not separate KRAS-mutant tumours (p = 0.12) and separates EGFR-mutant tumours only marginally (p = 0.03 before correcting for three tests), because many of its genes report immune and stromal content in bulk tumours rather than tumour-cell signalling.
 - Neither score is linked to overall survival, with or without adjustment for age and stage, and the broad signature does no better than random gene sets. MAPK pathway output in lung adenocarcinoma marks the driver, not the prognosis.
 
 ## Session info

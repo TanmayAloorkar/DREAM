@@ -16,6 +16,10 @@ params:
   progeny: "resources/progeny_human_top500.tsv"
   collectri: "resources/collectri_human.tsv"
   outdir: "../results/GSE197555_A549/decoupler"
+  treatment: "trametinib"   # values of the samplesheet condition column
+  control: "control"
+  gate_pathway: "MAPK"      # render stops unless this PROGENy pathway moves in gate_direction
+  gate_direction: "down"    # down, up or none
 ---
 
 The differential expression report gives a list of changed genes. Here those changes are traced back to the signalling pathways (PROGENy, 14 pathways) and transcription factors (CollecTRI, ~1,200 TFs) that most likely caused them, using the footprint of known target genes rather than the expression of the pathway or TF genes themselves.
@@ -47,10 +51,10 @@ stat_mat <- de |>
   group_by(symbol) |>
   slice_max(abs(stat), n = 1, with_ties = FALSE) |>
   ungroup() |>
-  (\(x) matrix(x$stat, dimnames = list(x$symbol, "trametinib_vs_control")))()
+  (\(x) matrix(x$stat, dimnames = list(x$symbol, paste0(params$treatment, "_vs_", params$control))))()
 
 meta <- read.csv(params$samplesheet) |>
-  mutate(condition = factor(condition, levels = c("control", "trametinib")),
+  mutate(condition = factor(condition, levels = c(params$control, params$treatment)),
          label = paste0(condition, "_", gsm))
 counts <- read_tsv(params$counts, show_col_types = FALSE) |> column_to_rownames("gene_id") |> as.matrix()
 counts <- counts[rowSums(counts >= 10) >= 3, meta$sample]
@@ -77,12 +81,15 @@ p_pw <- pw |>
   ggplot(aes(score, source, fill = score > 0)) +
   geom_col() +
   scale_fill_manual(values = c(`TRUE` = "#c0392b", `FALSE` = "#2471a3"), guide = "none") +
-  labs(x = "Activity score (trametinib vs control)", y = NULL)
+  labs(x = paste0("Activity score (", params$treatment, " vs ", params$control, ")"), y = NULL)
 ggsave(file.path(params$outdir, "figures", "progeny.png"), p_pw, width = 6, height = 4.5, dpi = 150)
 p_pw
 
 # MEK sits directly in the MAPK pathway; if its footprint does not fall, the inputs are wrong
-stopifnot(pw$score[pw$source == "MAPK"] < 0)
+if (params$gate_direction != "none") {
+  s <- pw$score[pw$source == params$gate_pathway]
+  stopifnot(length(s) == 1, sign(s) == if (params$gate_direction == "down") -1 else 1)
+}
 ```
 
 **Reading:** MAPK is by far the most suppressed pathway, as expected for a MEK inhibitor. PI3K activity goes *up*: blocking MEK removes ERK's negative feedback on upstream receptors, a well-known escape route that motivates MEK + PI3K/AKT combinations. EGFR scores near zero because its footprint overlaps MAPK, and the multivariate model assigns the shared signal to MAPK. JAK-STAT and NFkB fall alongside the interferon and inflammatory Hallmark sets seen in the enrichment report.
@@ -114,7 +121,7 @@ p_tf <- top_tf |>
   ggplot(aes(score, source, fill = group)) +
   geom_col() +
   scale_fill_manual(values = c(`ERK-driven` = "#7d3c98", up = "#c0392b", down = "#2471a3")) +
-  labs(x = "TF activity score (trametinib vs control)", y = NULL, fill = NULL)
+  labs(x = paste0("TF activity score (", params$treatment, " vs ", params$control, ")"), y = NULL, fill = NULL)
 ggsave(file.path(params$outdir, "figures", "collectri_top30.png"), p_tf, width = 6.5, height = 7, dpi = 150)
 p_tf
 ```

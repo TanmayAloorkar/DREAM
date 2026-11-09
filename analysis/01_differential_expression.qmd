@@ -15,11 +15,17 @@ params:
   h460_counts: "../results/GSE197555_H460_subset/featurecounts/counts.txt"
   h460_samplesheet: "../samplesheets/GSE197555_H460_subset.csv"
   outdir: "../results/GSE197555_A549/deseq2"
+  treatment: "trametinib"   # values of the samplesheet condition column
+  control: "control"
+  label_check: true         # GSE197555 only: GEO label swap check against H460
+  markers: ["DUSP6", "SPRY4", "ETV4", "ETV5", "DUSP4", "SPRY2", "PHLDA1", "EGR1", "FOSL1", "CCND1"]
+  gate_gene: "DUSP6"        # render stops unless this gene moves in gate_direction
+  gate_direction: "down"    # down, up or none
 ---
 
 A549 lung adenocarcinoma cells (KRAS G12S) treated with the MEK inhibitor trametinib (100 nM, 24 h), compared with DMSO controls, three biological replicates each. Reads were aligned with HISAT2 and counted per gene with featureCounts (unstranded, Ensembl 116) by the pipeline in `pipeline/`.
 
-**The GEO treatment labels for the A549 samples are swapped.** The first section below shows the evidence; all later sections use the corrected labels.
+**The GEO treatment labels for the A549 samples appear to be swapped.** No correction has been published for this series, so this rests on the data: the first section below shows the evidence, and all later sections use the corrected labels.
 
 ```{r setup}
 library(DESeq2)
@@ -40,9 +46,9 @@ set.seed(42)
 
 ## Sample labels: GEO vs data
 
-Trametinib blocks MEK, which shuts off ERK signalling, and classic ERK target genes drop within hours. Comparing samples as labelled in GEO, those genes are *higher* in the A549 samples labelled trametinib. The H460 samples from the same GEO series (first 2M read pairs per run, same pipeline) behave as expected. So the A549 labels are flipped, not the pipeline or the biology.
+Trametinib blocks MEK, which shuts off ERK signalling, and classic ERK target genes drop within hours. Comparing samples as labelled in GEO, those genes are *higher* in the A549 samples labelled trametinib. The H460 samples from the same GEO series (first 2M read pairs per run, same pipeline) behave as expected. This points to flipped A549 labels rather than a problem with the pipeline or the biology.
 
-```{r label_check}
+```{r read_counts}
 read_counts <- function(path) {
   fc <- read.delim(path, comment.char = "#", check.names = FALSE)
   m <- as.matrix(fc[, -(1:6)])
@@ -50,7 +56,10 @@ read_counts <- function(path) {
   colnames(m) <- sub("\\.bam$", "", colnames(m))
   m
 }
-erk_targets <- c("DUSP6", "SPRY4", "ETV4", "ETV5", "DUSP4", "SPRY2", "PHLDA1", "EGR1", "FOSL1", "CCND1")
+```
+
+```{r label_check, eval = params$label_check}
+erk_targets <- params$markers
 
 geo_log2_ratio <- function(counts_path, sheet_path, line) {
   m <- read_counts(counts_path)
@@ -87,7 +96,7 @@ write_tsv(as_tibble(counts, rownames = "gene_id"), file.path(params$outdir, "cou
 
 # condition holds the corrected label, geo_condition the one deposited in GEO
 meta <- read.csv(params$samplesheet) |>
-  mutate(condition = factor(condition, levels = c("control", "trametinib")),
+  mutate(condition = factor(condition, levels = c(params$control, params$treatment)),
          label = paste0(condition, "_", gsm))
 counts <- counts[, meta$sample]
 stopifnot(identical(colnames(counts), meta$sample))
@@ -114,7 +123,7 @@ tibble(sample = colnames(counts), assigned_pairs_M = colSums(counts) / 1e6) |>
 ```{r deseq}
 dds <- DESeqDataSetFromMatrix(counts[keep, ], meta, design = ~ condition)
 dds <- DESeq(dds)
-coef <- "condition_trametinib_vs_control"
+coef <- paste0("condition_", params$treatment, "_vs_", params$control)
 res <- results(dds, name = coef, alpha = 0.05)
 shrunk <- lfcShrink(dds, coef = coef, type = "apeglm")
 
@@ -186,7 +195,7 @@ p_volcano <- volcano_df |>
   geom_point(size = 0.7, alpha = 0.6) +
   geom_text_repel(data = labels, aes(label = symbol), colour = "black", size = 3, max.overlaps = 30) +
   scale_colour_manual(values = c(up = "#c0392b", down = "#2471a3", ns = "grey70")) +
-  labs(x = "log2 fold change (trametinib vs control, shrunken)", y = "-log10 adjusted p (capped at 300)", colour = NULL)
+  labs(x = paste0("log2 fold change (", params$treatment, " vs ", params$control, ", shrunken)"), y = "-log10 adjusted p (capped at 300)", colour = NULL)
 ggsave(file.path(params$outdir, "figures", "volcano.png"), p_volcano, width = 7, height = 5.5, dpi = 150)
 p_volcano
 ```
@@ -206,12 +215,16 @@ pheatmap(m, scale = "row", annotation_col = meta |> column_to_rownames("sample")
 Trametinib blocks MEK, so classic ERK-driven transcripts should fall.
 
 ```{r mek_targets}
-mek <- tab |> filter(symbol %in% c(erk_targets, "MYC")) |>
+mek <- tab |> filter(symbol %in% c(params$markers, "MYC")) |>
   select(symbol, baseMean, log2FC_shrunk, padj) |>
   arrange(log2FC_shrunk)
 mek
 # DUSP6 is the most robust ERK readout; if it is not down, something upstream is wrong
-stopifnot(mek$log2FC_shrunk[mek$symbol == "DUSP6"] < 0, mek$padj[mek$symbol == "DUSP6"] < 0.05)
+if (params$gate_direction != "none") {
+  g <- tab |> filter(symbol == params$gate_gene)
+  stopifnot(nrow(g) == 1, g$padj < 0.05,
+            sign(g$log2FC_shrunk) == if (params$gate_direction == "down") -1 else 1)
+}
 ```
 
 ## Pathway enrichment
@@ -260,8 +273,8 @@ go_up <- go_for(sig$gene_id[sig$log2FC_shrunk > 0])
 go_down <- go_for(sig$gene_id[sig$log2FC_shrunk < 0])
 write_tsv(as.data.frame(go_up), file.path(params$outdir, "go_bp_up.tsv"))
 write_tsv(as.data.frame(go_down), file.path(params$outdir, "go_bp_down.tsv"))
-dotplot(go_up, showCategory = 15) + ggtitle("Up in trametinib")
-dotplot(go_down, showCategory = 15) + ggtitle("Down in trametinib")
+dotplot(go_up, showCategory = 15) + ggtitle(paste("Up in", params$treatment))
+dotplot(go_down, showCategory = 15) + ggtitle(paste("Down in", params$treatment))
 ```
 
 ### KEGG (over-representation)

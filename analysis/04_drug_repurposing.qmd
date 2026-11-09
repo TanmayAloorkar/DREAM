@@ -13,7 +13,8 @@ params:
   deseq2: "../results/GSE197555_A549/deseq2/deseq2_results.tsv"
   lincs: "../data/lincs/lincs2020.h5"
   n_genes: 150
-  positive_control_moa: "MEK inhibitor"
+  treatment: "trametinib"
+  positive_control_moa: "MEK inhibitor"   # LINCS mechanism expected to mimic the treatment
   workers: 4
   outdir: "../results/GSE197555_A549/lincs"
 ---
@@ -102,7 +103,7 @@ p_ctrl <- hits |>
   ggplot(aes(NCS, colour = control)) +
   geom_density() +
   scale_colour_manual(values = setNames(c("#c0392b", "grey50"), c(params$positive_control_moa, "other"))) +
-  labs(x = "NCS per signature (positive = mimics trametinib)", y = "Density", colour = NULL)
+  labs(x = paste0("NCS per signature (positive = mimics ", params$treatment, ")"), y = "Density", colour = NULL)
 ggsave(file.path(params$outdir, "figures", "positive_control.png"), p_ctrl, width = 6, height = 3.5, dpi = 150)
 p_ctrl
 

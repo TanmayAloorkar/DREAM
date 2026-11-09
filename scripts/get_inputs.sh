@@ -32,11 +32,13 @@ for run in SRR18159283 SRR18159282 SRR18159281 SRR18159280 SRR18159278 SRR181592
   [ -f "data/h460_subset/${run}_2.fastq.gz" ] || fastq-dump -X 2000000 --split-files --gzip -O data/h460_subset "$run"
 done
 
-# TCGA-LUAD from the UCSC Xena GDC hub (analysis/03)
+# TCGA project from the UCSC Xena GDC hub (analysis/03); set TCGA_PROJECT for another cancer type
+project=${TCGA_PROJECT:-TCGA-LUAD}
 mkdir -p data/tcga
 for f in star_tpm survival clinical somaticmutation_wxs; do
-  [ -f "data/tcga/TCGA-LUAD.$f.tsv.gz" ] || get "https://gdc-hub.s3.us-east-1.amazonaws.com/download/TCGA-LUAD.$f.tsv.gz" "data/tcga/TCGA-LUAD.$f.tsv.gz"
+  [ -f "data/tcga/$project.$f.tsv.gz" ] || get "https://gdc-hub.s3.us-east-1.amazonaws.com/download/$project.$f.tsv.gz" "data/tcga/$project.$f.tsv.gz"
 done
+[ "$project" = TCGA-LUAD ] || exit 0  # checksums below are for the published LUAD results only
 sha256sum -c - <<'EOF'
 460dab5f84d8fa7da8ef17c913d2816cd66a34e837908e64e0b3c7d65e3d40ee  data/tcga/TCGA-LUAD.star_tpm.tsv.gz
 edbf9e416dd6dafa4a4fae9174a7a9e1909bc0b143d9fc80b1962b1172bd2d6c  data/tcga/TCGA-LUAD.survival.tsv.gz
