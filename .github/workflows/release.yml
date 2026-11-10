@@ -11,7 +11,8 @@ permissions:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    # pinned, not ubuntu-latest: the binary needs the glibc of the build system, and 24.04 (glibc 2.39) covers Mint 22 and newer
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
