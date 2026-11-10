@@ -28,6 +28,7 @@ Linux (x86_64) only.
 1. Download `DREAM-<version>-linux-x86_64.tar.gz` from the [latest release](https://github.com/TanmayAloorkar/DREAM/releases/latest).
 2. Extract it, for example with `tar -xzf DREAM-*-linux-x86_64.tar.gz` or right-click and "Extract here".
 3. Open the folder and double-click **Run_Dream**. The desktop app opens on that folder; its Setup tab shows what is missing and downloads the reference data (about 19 GB) when you ask.
+4. Or, in a terminal, use **Run_Dream-cli** from the same folder (see [Command line](#command-line)).
 
 The archive holds the whole project plus the app. DREAM still needs Miniforge (conda), Java 17 or later and Nextflow, which the Setup tab links to.
 
@@ -82,6 +83,20 @@ cd gui && cargo build --release
 
 The result is a single 14 MB executable; it remembers the DREAM folder you choose.
 
+### Command line
+
+`Run_Dream-cli` (built from the same project as `dream-cli`) runs the same steps from a terminal, with the same checks and defaults as the desktop app. Output goes straight to the terminal, Ctrl-C stops the whole job, and a failed step exits with its error code.
+
+```bash
+./Run_Dream-cli status                     # what is installed and downloaded
+./Run_Dream-cli setup                      # create missing environments, download missing data
+./Run_Dream-cli run --strandedness unstranded
+./Run_Dream-cli report                     # all four reports; or e.g. `report 03 04`
+./Run_Dream-cli results                    # where the rendered reports are
+```
+
+`run` and `report` take `--samplesheet`, `--outdir`, `--treatment`, `--control`, `--moa`, `--tcga-project`, `--no-label-check` and `--no-gates`, the same options as in "Using it on another dataset" below. Add `--dry-run` to print a command without running it, and `--help` to any command for its options.
+
 A quick check of the pipeline on simulated data (a few minutes, also run by CI on every push):
 
 ```bash
@@ -126,5 +141,5 @@ scripts/      input downloads with checksums
 results/      analysis tables and figures (alignments and raw counts are not tracked)
 docs/         rendered reports
 tests/        simulated test data and the count check used by CI
-gui/          Rust desktop app (egui) that runs the steps above
+gui/          Rust desktop app (egui) and command-line app that run the steps above
 ```

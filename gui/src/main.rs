@@ -11,7 +11,7 @@ use eframe::egui::{
 use job::Jobs;
 use project::{ReportGroup, State, Status};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 use theme::*;
 
 const CONTENT_WIDTH: f32 = 880.0;
@@ -113,6 +113,21 @@ impl App {
         match &self.root {
             Some(root) if p.is_relative() => root.join(p),
             _ => p.to_path_buf(),
+        }
+    }
+
+    fn report_args<'a>(&'a self, root: &'a Path) -> project::ReportArgs<'a> {
+        project::ReportArgs {
+            root,
+            samplesheet: &self.samplesheet,
+            outdir: &self.outdir,
+            treatment: &self.treatment,
+            control: &self.control,
+            moa: &self.moa,
+            tcga_project: &self.tcga_project,
+            label_check: self.label_check,
+            gates: self.gates,
+            selected: self.selected,
         }
     }
 
@@ -359,16 +374,6 @@ fn check_rows(ui: &mut Ui, checks: &[&project::Check]) {
             });
         }
     });
-}
-
-fn ago(t: SystemTime) -> String {
-    let s = SystemTime::now().duration_since(t).unwrap_or_default().as_secs();
-    match s {
-        0..60 => "just now".into(),
-        60..3600 => format!("{} min ago", s / 60),
-        3600..86400 => format!("{} h ago", s / 3600),
-        _ => format!("{} days ago", s / 86400),
-    }
 }
 
 // ---------- top bar and log ----------
@@ -689,17 +694,10 @@ impl App {
         let busy = self.busy_reason();
         let counts = self.abs(&self.outdir).join("featurecounts/counts.txt");
 
-        let sheet_ok = self.abs(&self.samplesheet).is_file();
         let pipeline_blocked = busy.clone().or_else(|| {
-            [
-                (!st.ok("Nextflow") || !st.ok("Java"), "Install Nextflow and Java (Setup step 1)"),
-                (!st.ok("HISAT2 index, GRCh38") || !st.ok("Ensembl 116 annotation"), "Download the reference (Setup step 2)"),
-                (!sheet_ok, "Samplesheet not found"),
-                (self.strandedness.is_none(), "Choose the strandedness"),
-            ]
-            .into_iter()
-            .find(|(bad, _)| *bad)
-            .map(|(_, why)| why.to_string())
+            project::pipeline_blocker(st, &root, &self.samplesheet)
+                .or(self.strandedness.is_none().then_some("Choose the strandedness"))
+                .map(str::to_string)
         });
 
         step(ui, 4, "Pipeline", "Reads to gene counts: fastp, HISAT2, featureCounts, with FastQC, Qualimap and MultiQC.", counts.is_file(), false, |ui| {
@@ -759,26 +757,9 @@ impl App {
             });
         });
 
-        let deseq2_ready = self.abs(&self.outdir).join("deseq2/deseq2_results.tsv").is_file() || self.selected[0];
-        let tcga_ready = ["star_tpm", "survival", "clinical", "somaticmutation_wxs"]
-            .iter()
-            .all(|k| project::tcga_file(&root, &self.tcga_project, k).is_file());
-        let h460_ready = root.join("results/GSE197555_H460_subset/featurecounts/counts.txt").is_file();
-        let any = self.selected.iter().any(|s| *s);
-        let reports_blocked = busy.or_else(|| {
-            [
-                (!any, "Select at least one report"),
-                (!st.ok("dream-r environment"), "Create the dream-r environment (Setup step 1)"),
-                (self.selected[0] && !counts.is_file(), "Report 01 needs gene counts: run the pipeline first"),
-                (self.selected[0] && self.label_check && !h460_ready, "The GEO label check needs the H460 pipeline run"),
-                (!deseq2_ready, "Reports 02-04 need report 01's results"),
-                (self.selected[2] && !tcga_ready, "Report 03 needs the TCGA data (Setup step 2)"),
-                (self.selected[3] && !st.ok("LINCS 2020 signatures"), "Report 04 needs LINCS 2020 (Setup step 3)"),
-            ]
-            .into_iter()
-            .find(|(bad, _)| *bad)
-            .map(|(_, why)| why.to_string())
-        });
+        let report_args = self.report_args(&root);
+        let reports_blocked = busy.or_else(|| project::report_blocker(st, &report_args).map(str::to_string));
+        let report_script = project::report_command(&report_args, &st.conda_bin("conda"));
         let rendered = project::REPORTS.iter().all(|r| root.join(format!("analysis/{r}.html")).is_file());
 
         step(ui, 5, "Reports", "Quarto reports 01-04, rendered in order. Each stops if its built-in check fails.", rendered, true, |ui| {
@@ -819,22 +800,7 @@ impl App {
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if primary(ui, "Render reports", reports_blocked.as_deref()) {
-                        let script = project::report_command(
-                            &project::ReportArgs {
-                                root: &root,
-                                samplesheet: &self.samplesheet,
-                                outdir: &self.outdir,
-                                treatment: &self.treatment,
-                                control: &self.control,
-                                moa: &self.moa,
-                                tcga_project: &self.tcga_project,
-                                label_check: self.label_check,
-                                gates: self.gates,
-                                selected: self.selected,
-                            },
-                            &st.conda_bin("conda"),
-                        );
-                        actions.push(Action::Start { name: "Reports".into(), script, env: vec![] });
+                        actions.push(Action::Start { name: "Reports".into(), script: report_script, env: vec![] });
                     }
                 });
             });
@@ -881,7 +847,7 @@ impl App {
                                     actions.push(Action::Open(r.path.clone()));
                                 }
                                 if let Some(m) = r.modified {
-                                    ui.label(muted(ago(m)).size(12.5));
+                                    ui.label(muted(project::ago(m)).size(12.5));
                                 }
                             });
                         });

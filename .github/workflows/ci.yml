@@ -50,4 +50,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: dream-gui-linux-x86_64
-          path: gui/target/release/dream-gui
+          path: |
+            gui/target/release/dream-gui
+            gui/target/release/dream-cli

@@ -247,6 +247,53 @@ pub fn reports(root: &Path) -> Vec<ReportGroup> {
     ]
 }
 
+/// A path as typed in the app, relative to the DREAM folder unless absolute.
+pub fn abs(root: &Path, p: &str) -> PathBuf {
+    let p = Path::new(p);
+    if p.is_absolute() { p.to_path_buf() } else { root.join(p) }
+}
+
+fn first_problem(checks: &[(bool, &'static str)]) -> Option<&'static str> {
+    checks.iter().find(|(bad, _)| *bad).map(|(_, why)| *why)
+}
+
+/// Why the pipeline cannot start yet, or None when it can.
+pub fn pipeline_blocker(st: &Status, root: &Path, samplesheet: &str) -> Option<&'static str> {
+    first_problem(&[
+        (!st.ok("Nextflow") || !st.ok("Java"), "Install Nextflow and Java (Setup step 1)"),
+        (!st.ok("HISAT2 index, GRCh38") || !st.ok("Ensembl 116 annotation"), "Download the reference (Setup step 2)"),
+        (!abs(root, samplesheet).is_file(), "Samplesheet not found"),
+    ])
+}
+
+/// Why the selected reports cannot render yet, or None when they can.
+pub fn report_blocker(st: &Status, a: &ReportArgs) -> Option<&'static str> {
+    let [r01, _, r03, r04] = a.selected;
+    let out = abs(a.root, a.outdir);
+    let deseq2_ready = out.join("deseq2/deseq2_results.tsv").is_file() || r01;
+    let tcga_ready = TCGA_FILES.iter().all(|k| tcga_file(a.root, a.tcga_project, k).is_file());
+    let h460_ready = a.root.join("results/GSE197555_H460_subset/featurecounts/counts.txt").is_file();
+    first_problem(&[
+        (!a.selected.contains(&true), "Select at least one report"),
+        (!st.ok("dream-r environment"), "Create the dream-r environment (Setup step 1)"),
+        (r01 && !out.join("featurecounts/counts.txt").is_file(), "Report 01 needs gene counts: run the pipeline first"),
+        (r01 && a.label_check && !h460_ready, "The GEO label check needs the H460 pipeline run"),
+        (!deseq2_ready, "Reports 02-04 need report 01's results"),
+        (r03 && !tcga_ready, "Report 03 needs the TCGA data (Setup step 2)"),
+        (r04 && !st.ok("LINCS 2020 signatures"), "Report 04 needs LINCS 2020 (Setup step 3)"),
+    ])
+}
+
+pub fn ago(t: SystemTime) -> String {
+    let s = SystemTime::now().duration_since(t).unwrap_or_default().as_secs();
+    match s {
+        0..60 => "just now".into(),
+        60..3600 => format!("{} min ago", s / 60),
+        3600..86400 => format!("{} h ago", s / 3600),
+        _ => format!("{} days ago", s / 86400),
+    }
+}
+
 pub struct PipelineArgs<'a> {
     pub samplesheet: &'a str,
     pub strandedness: &'a str,
@@ -282,12 +329,8 @@ pub const REPORTS: [&str; 4] = ["01_differential_expression", "02_mechanism", "0
 /// One quarto render per selected report, chained so the first failure stops the rest.
 /// Paths are absolute because Quarto runs from analysis/.
 pub fn report_command(a: &ReportArgs, conda: &str) -> String {
-    let abs = |p: &str| {
-        let p = Path::new(p);
-        if p.is_absolute() { p.to_path_buf() } else { a.root.join(p) }
-    };
-    let out = abs(a.outdir);
-    let sheet = abs(a.samplesheet);
+    let out = abs(a.root, a.outdir);
+    let sheet = abs(a.root, a.samplesheet);
     let at = |sub: &str| out.join(sub).to_string_lossy().to_string();
     let deseq2 = at("deseq2/deseq2_results.tsv");
     let tcga_dir = format!("tcga_{}", a.tcga_project.trim_start_matches("TCGA-").to_lowercase());

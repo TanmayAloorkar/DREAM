@@ -1,11 +1,12 @@
 [package]
 name = "dream-gui"
-version = "0.1.0"
+version = "0.1.2"
 edition = "2024"
 description = "Desktop launcher for the DREAM RNA-seq and drug repurposing workflow"
 license = "MIT"
 
 [dependencies]
+clap = { version = "4.6.7", features = ["derive"] }
 eframe = { version = "0.37.0", default-features = false, features = ["glow", "wayland", "x11", "accesskit", "default_fonts"] }
 rfd = "0.18.0"
 
